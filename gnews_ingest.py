@@ -9,6 +9,7 @@ Free tier: 100 requests/day, max 10 articles per request.
 """
 
 import os
+import time
 import requests
 from dataclasses import dataclass, field
 from datetime import date
@@ -61,6 +62,23 @@ def _prepare_article(article, query_sector):
     return article
 
 
+def _request_delay_seconds():
+    """GNews free plan: max 1 request per second."""
+    return float(os.environ.get("GNEWS_REQUEST_DELAY", "1.15"))
+
+
+def _error_detail(resp):
+    try:
+        payload = resp.json()
+        if isinstance(payload.get("errors"), dict):
+            return "; ".join(f"{k}: {v}" for k, v in payload["errors"].items())
+        if isinstance(payload.get("errors"), list):
+            return "; ".join(str(item) for item in payload["errors"])
+    except ValueError:
+        pass
+    return (resp.text or "").strip()[:160]
+
+
 def fetch_query(query_label, query, api_key, max_results=10, language="en", country="in"):
     params = {
         "q": query,
@@ -69,35 +87,57 @@ def fetch_query(query_label, query, api_key, max_results=10, language="en", coun
         "max": max_results,
         "apikey": api_key,
     }
-    resp = requests.get(GNEWS_URL, params=params, timeout=12)
-    if resp.status_code != 200:
-        msg = resp.text[:200]
-        print(f"  [warning] GNews error for '{query_label}': {resp.status_code} {msg}")
-        return [], 0, f"{query_label}: HTTP {resp.status_code}"
+    retries = int(os.environ.get("GNEWS_RETRIES", "2"))
 
-    payload = resp.json()
-    raw_items = payload.get("articles") or []
-    articles = []
-    for item in raw_items:
-        title = (item.get("title") or "").strip()
-        if not title:
+    for attempt in range(retries + 1):
+        resp = requests.get(GNEWS_URL, params=params, timeout=12)
+        if resp.status_code == 200:
+            payload = resp.json()
+            raw_items = payload.get("articles") or []
+            articles = []
+            for item in raw_items:
+                title = (item.get("title") or "").strip()
+                if not title:
+                    continue
+                pub_date = (item.get("publishedAt") or str(date.today()))[:10]
+                source_name = (item.get("source") or {}).get("name") or "Unknown"
+                article = Article(
+                    source=f"{source_name} (GNews: {query_label})",
+                    pub_date=pub_date,
+                    title=title,
+                    subtitle=item.get("description") or "",
+                    byline="",
+                    body=item.get("content") or item.get("description") or "",
+                    url=item.get("url"),
+                    image_url=item.get("image") or None,
+                )
+                prepared = _prepare_article(article, query_label)
+                if prepared:
+                    articles.append(prepared)
+            return articles, len(raw_items), None
+
+        if resp.status_code in (429, 503) and attempt < retries:
+            wait = _request_delay_seconds() * (attempt + 1)
+            print(f"  [info] GNews rate limit for '{query_label}', retry in {wait:.1f}s ...")
+            time.sleep(wait)
             continue
-        pub_date = (item.get("publishedAt") or str(date.today()))[:10]
-        source_name = (item.get("source") or {}).get("name") or "Unknown"
-        article = Article(
-            source=f"{source_name} (GNews: {query_label})",
-            pub_date=pub_date,
-            title=title,
-            subtitle=item.get("description") or "",
-            byline="",
-            body=item.get("content") or item.get("description") or "",
-            url=item.get("url"),
-            image_url=item.get("image") or None,
-        )
-        prepared = _prepare_article(article, query_label)
-        if prepared:
-            articles.append(prepared)
-    return articles, len(raw_items), None
+
+        detail = _error_detail(resp)
+        if resp.status_code == 429:
+            label = "rate limit (free plan = 1 request/sec)"
+        elif resp.status_code == 403:
+            label = "daily quota reached (resets midnight UTC)"
+        elif resp.status_code == 400:
+            label = "bad query syntax"
+        else:
+            label = f"HTTP {resp.status_code}"
+        msg = f"{query_label}: {label}"
+        if detail:
+            msg += f" — {detail}"
+        print(f"  [warning] GNews error for '{query_label}': {msg}")
+        return [], 0, msg
+
+    return [], 0, f"{query_label}: request failed after retries"
 
 
 def fetch_all(queries=None, max_results=None):
@@ -116,7 +156,9 @@ def fetch_all(queries=None, max_results=None):
     skipped_dupes = 0
     errors = []
 
-    for label, q in queries.items():
+    for index, (label, q) in enumerate(queries.items()):
+        if index > 0:
+            time.sleep(_request_delay_seconds())
         print(f"Fetching GNews (IN): {label} ...")
         items, raw_count, err = fetch_query(label, q, api_key, max_results=max_results)
         raw_from_api += raw_count

@@ -34,7 +34,7 @@ import dedupe
 import email_digest
 import admin_auth
 
-from sector_keywords import SECTOR_LABELS, normalize_sector_tags
+from sector_keywords import SECTOR_LABELS, GNEWS_QUERIES, normalize_sector_tags
 
 app = FastAPI(title="Redseer Insight Hour")
 
@@ -240,7 +240,12 @@ def refresh_gnews(_: None = Depends(admin_auth.require_admin)):
         merged = dedupe_stats["total_merged"]
         errors = stats.get("errors") or []
         raw_from_api = stats.get("raw_from_api", stats["fetched"])
-        msg = "GNews India items pre-tagged by sector — no Gemini needed."
+        sector_count = len(GNEWS_QUERIES)
+        sectors_ok = sector_count - len(errors)
+        msg = (
+            f"GNews saved {inserted} new, {len(refreshed_ids)} updated "
+            f"({sectors_ok}/{sector_count} sectors)."
+        )
         if not articles and raw_from_api == 0 and errors:
             msg = f"GNews returned no articles. {'; '.join(errors[:3])}"
         elif not articles and raw_from_api > 0:
@@ -248,7 +253,16 @@ def refresh_gnews(_: None = Depends(admin_auth.require_admin)):
                 f"GNews returned {raw_from_api} headline(s) but none matched sector keywords."
             )
         elif errors:
-            msg += f" ({len(errors)} query error(s).)"
+            rate_hits = sum(1 for err in errors if "rate limit" in err.lower() or "429" in err)
+            quota_hits = sum(1 for err in errors if "quota" in err.lower() or "403" in err)
+            if rate_hits:
+                msg += (
+                    " Some sectors were skipped because GNews free plan allows only 1 request per second."
+                )
+            elif quota_hits:
+                msg += " Daily GNews quota used — resets at midnight UTC."
+            else:
+                msg += f" {len(errors)} sector query failed."
         return {
             "fetched": stats["fetched"],
             "raw_from_api": raw_from_api,
