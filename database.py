@@ -6,6 +6,7 @@ Good enough for an internal single-office tool; can swap for Postgres later
 if this grows into a multi-user product.
 """
 
+import os
 import sqlite3
 import json
 import re
