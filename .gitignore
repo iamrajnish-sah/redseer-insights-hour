@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+sector_recipients.json
+news.db
+*.db
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.vercel/
+.DS_Store
+*.log
+Thumbs.db

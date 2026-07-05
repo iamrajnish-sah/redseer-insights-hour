@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Redseer Insight Hour — India Sector News</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #eef1f8;
+    --surface: #ffffff;
+    --surface-2: #f8fafc;
+    --border: #e2e8f0;
+    --border-strong: #cbd5e1;
+    --text: #0f172a;
+    --text-muted: #64748b;
+    --text-soft: #94a3b8;
+    --primary: #1e3a5f;
+    --primary-hover: #152a45;
+    --accent: #ea580c;
+    --accent-soft: #fff7ed;
+    --accent-glow: rgba(234, 88, 12, 0.15);
+    --teal: #0d9488;
+    --teal-soft: #ecfdf5;
+    --success: #059669;
+    --danger: #dc2626;
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+    --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.08);
+    --shadow-lg: 0 16px 40px rgba(15, 23, 42, 0.12);
+    --radius: 14px;
+    --radius-sm: 10px;
+    --font: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-display: "Fraunces", Georgia, serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(234, 88, 12, 0.08), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 0%, rgba(13, 148, 136, 0.06), transparent),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    line-height: 1.5;
+  }
+
+  .app-shell { max-width: 1280px; margin: 0 auto; padding: 0 20px 48px; }
+
+  /* ── Header ── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 28px 0 20px;
+    flex-wrap: wrap;
+  }
+  .brand-block { display: flex; flex-direction: column; gap: 6px; }
+  .brand {
+    font-family: var(--font-display);
+    font-size: clamp(1.75rem, 4vw, 2.25rem);
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.02em;
+    color: var(--primary);
+  }
+  .brand em {
+    font-style: normal;
+    background: linear-gradient(135deg, var(--accent), #f97316);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .brand-tagline {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    max-width: 520px;
+  }
+  .date-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    box-shadow: var(--shadow-sm);
+  }
+  .date-pill::before {
+    content: "";
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.2);
+  }
+
+  /* ── Stats ── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 640px) { .stats-row { grid-template-columns: 1fr; } }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    box-shadow: var(--shadow-sm);
+  }
+  .stat-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-soft);
+  }
+  .stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary);
+    margin-top: 4px;
+  }
+  .stat-card.highlight .stat-value { color: var(--accent); }
+
+  /* ── Control panel ── */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    box-shadow: var(--shadow-md);
+    margin-bottom: 16px;
+  }
+  .panel-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-soft);
+    margin: 0 0 12px;
+  }
+  .panel-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .panel-row + .panel-row { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-family: var(--font);
+    font-size: 0.84rem;
+    font-weight: 600;
+    padding: 10px 16px;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    white-space: nowrap;
+  }
+  .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+  .btn:active { transform: translateY(0); }
+  .btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--primary), #2d4a6f);
+    color: #fff;
+    border-color: var(--primary);
+  }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-accent {
+    background: linear-gradient(135deg, var(--accent), #f97316);
+    color: #fff;
+  }
+  .btn-teal {
+    background: linear-gradient(135deg, var(--teal), #14b8a6);
+    color: #fff;
+  }
+  .btn-ghost {
+    background: var(--surface-2);
+    color: var(--text);
+    border-color: var(--border);
+  }
+  .btn-ghost:hover { background: #fff; border-color: var(--border-strong); }
+  .btn.loading { pointer-events: none; opacity: 0.7; }
+
+  .field-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-right: 4px;
+  }
+  select, .search-input {
+    font-family: var(--font);
+    font-size: 0.88rem;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  select:focus, .search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+  }
+  #uploadInput { display: none; }
+
+  /* ── Search ── */
+  .search-panel {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .search-input { flex: 1; min-width: 240px; }
+  .search-icon-wrap { position: relative; flex: 1; min-width: 240px; }
+  .search-icon-wrap .search-input { width: 100%; padding-left: 40px; }
+  .search-icon-wrap::before {
+    content: "⌕";
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-soft);
+    font-size: 1rem;
+    pointer-events: none;
+  }
+  #searchResultCount {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--teal);
+    padding: 6px 12px;
+    background: var(--teal-soft);
+    border-radius: 999px;
+  }
+
+  /* ── Status toast ── */
+  #statusMsg {
+    min-height: 0;
+    margin-bottom: 12px;
+    padding: 0;
+    font-size: 0.84rem;
+    font-weight: 500;
+    color: var(--teal);
+    transition: all 0.2s ease;
+  }
+  #statusMsg:not(:empty) {
+    padding: 12px 16px;
+    background: var(--teal-soft);
+    border: 1px solid #99f6e4;
+    border-radius: var(--radius-sm);
+  }
+  #statusMsg.error {
+    color: var(--danger);
+    background: #fef2f2;
+    border-color: #fecaca;
+  }
+
+  /* ── Sector tabs ── */
+  .sector-nav {
+    display: flex;
+    gap: 8px;
+    padding: 4px 0 16px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sector-nav::-webkit-scrollbar { height: 4px; }
+  .tab {
+    flex-shrink: 0;
+    padding: 10px 16px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    white-space: nowrap;
+  }
+  .tab:hover {
+    border-color: var(--border-strong);
+    color: var(--text);
+    transform: translateY(-1px);
+  }
+  .tab.active {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+    box-shadow: 0 4px 14px rgba(30, 58, 95, 0.25);
+  }
+  .tab .count {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    font-size: 0.68rem;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.15);
+  }
+  .tab:not(.active) .count {
+    background: var(--bg);
+    color: var(--text-soft);
+  }
+
+  /* ── Article grid ── */
+  main { padding-top: 4px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.3s ease, background 0.8s ease;
+  }
+  .card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--border-strong);
+  }
+  .card.is-new {
+    border-color: var(--accent);
+    background: linear-gradient(180deg, var(--accent-soft) 0%, var(--surface) 100%);
+    box-shadow: 0 0 0 1px var(--accent), var(--shadow-md);
+  }
+  .card-badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .new-pill {
+    font-size: 0.62rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.75; }
+  }
+  .badge {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 4px 9px;
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--primary);
+    border: 1px solid var(--border);
+  }
+  .card-headline {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    line-height: 1.4;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text);
+  }
+  .card-summary {
+    font-size: 0.88rem;
+    line-height: 1.55;
+    color: var(--text-muted);
+    margin: 0;
+    flex: 1;
+  }
+  .card-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.74rem;
+    color: var(--text-soft);
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    margin-top: auto;
+  }
+  .card-meta a {
+    color: var(--teal);
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .card-meta a:hover { text-decoration: underline; }
+
+  .empty-state {
+    text-align: center;
+    padding: 64px 24px;
+    background: var(--surface);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+  }
+  .empty-state-icon { font-size: 2.5rem; margin-bottom: 12px; opacity: 0.5; }
+  .empty-state h3 {
+    font-family: var(--font-display);
+    font-size: 1.25rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+  .panel-backend {
+    border-color: #c7d2fe;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  }
+  .panel-backend .panel-title { color: var(--primary); }
+  .btn-email {
+    background: linear-gradient(135deg, #7c3aed, #6d28d9);
+    color: #fff;
+  }
+  .btn-sm {
+    padding: 8px 12px;
+    font-size: 0.78rem;
+  }
+  input[type="date"].search-input {
+    min-width: 160px;
+  }
+  .backend-toggle-row {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .btn-backend-toggle {
+    font-size: 0.82rem;
+    padding: 10px 16px;
+    border-color: #c7d2fe;
+    color: var(--primary);
+    background: #fff;
+  }
+  .btn-backend-toggle:hover {
+    background: #eef2ff;
+    border-color: #a5b4fc;
+  }
+  .btn-backend-toggle[aria-expanded="true"] {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+  }
+  .panel-backend-collapsible {
+    display: none;
+    margin-top: 12px;
+  }
+  .panel-backend-collapsible.open {
+    display: block;
+  }
+  .panel-backend .stats-row {
+    margin-bottom: 4px;
+  }
+  .card-image-wrap {
+    margin: -4px -4px 4px;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--bg);
+    border: 1px solid var(--border);
+  }
+  .card-image {
+    display: block;
+    width: 100%;
+    height: 168px;
+    object-fit: cover;
+  }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+
+  <header class="topbar">
+    <div class="brand-block">
+      <h1 class="brand">Redseer <em>Insight Hour</em></h1>
+      <p class="brand-tagline">Daily sector intelligence for India — curated news delivered to the right team.</p>
+    </div>
+    <div class="date-pill" id="todayDate"></div>
+  </header>
+
+  <div class="backend-toggle-row">
+    <button
+      type="button"
+      class="btn btn-ghost btn-backend-toggle"
+      id="btnBackendToggle"
+      aria-expanded="false"
+      aria-controls="backendPanel"
+      onclick="toggleBackendPanel()"
+    >⚙ Backend Management</button>
+  </div>
+
+  <section class="panel panel-backend panel-backend-collapsible" id="backendPanel">
+    <p class="panel-title">Backend Management</p>
+    <div class="stats-row" id="statStrip"></div>
+    <div class="panel-row">
+      <button class="btn btn-primary" id="btnUpload" onclick="document.getElementById('uploadInput').click()">📰 Upload Newspaper</button>
+      <input type="file" id="uploadInput" accept=".epub,.pdf,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.txt" onchange="uploadNewspaper(event)">
+      <button class="btn btn-ghost" id="btnRss" onclick="refreshRss()">↻ Refresh RSS</button>
+      <button class="btn btn-ghost" id="btnNewsApi" onclick="refreshNewsApi()">↻ Refresh NewsAPI</button>
+      <button class="btn btn-teal" id="btnGemini" onclick="processArticles()">✦ Process with Gemini</button>
+      <button class="btn btn-email" id="btnEmail" onclick="sendSectorEmails()">✉ Send Email</button>
+      <button class="btn btn-ghost btn-sm" id="btnRefilterRh" onclick="refilterRideHailing()">↺ Refilter ride hailing</button>
+      <button class="btn btn-ghost btn-sm" id="btnDedupe" onclick="removeDuplicates()">↺ Remove duplicates</button>
+    </div>
+    <div class="panel-row">
+      <span class="field-label">News date</span>
+      <input type="date" class="search-input" id="dateFilter" onchange="loadArticles()">
+      <button class="btn btn-ghost btn-sm" onclick="clearDateFilter()">Show all dates</button>
+      <span class="field-label" style="margin-left:8px;" id="emailHint"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <p class="panel-title">Search news</p>
+    <div class="search-panel">
+      <div class="search-icon-wrap">
+        <input type="search" class="search-input" id="searchBox"
+          placeholder="Search Flipkart, Blinkit, Zomato, RBI, Udaan..."
+          onkeydown="if(event.key==='Enter') runSearch()">
+      </div>
+      <button class="btn btn-accent" onclick="runSearch()">Search</button>
+      <button class="btn btn-ghost" onclick="clearSearch()">Clear</button>
+      <span id="searchResultCount"></span>
+    </div>
+  </section>
+
+  <div id="statusMsg"></div>
+
+  <nav class="sector-nav" id="tabs"></nav>
+
+  <main>
+    <div class="grid" id="grid"></div>
+    <div class="empty-state" id="emptyState" style="display:none;">
+      <div class="empty-state-icon">📭</div>
+      <h3>No articles yet</h3>
+      <p>Check back later for new sector news.</p>
+    </div>
+  </main>
+
+</div>
+
+<script>
+const API = "";
+let adminPassword = sessionStorage.getItem("adminPassword") || "";
+let SECTORS = {};
+let currentSector = "";
+let articlesCache = [];
+const NEW_HIGHLIGHT_MS = 5 * 60 * 1000;
+let newUntil = {};
+let highlightTimer = null;
+
+async function init() {
+  document.getElementById("todayDate").textContent = new Date().toDateString();
+  initDatePicker();
+  SECTORS = await (await fetch(API + "/api/sectors")).json();
+  buildTabs();
+  await loadArticles();
+}
+
+function adminHeaders(extra = {}) {
+  const headers = { ...extra };
+  if (adminPassword) headers["X-Admin-Password"] = adminPassword;
+  return headers;
+}
+
+async function adminFetch(url, options = {}) {
+  options.headers = adminHeaders(options.headers || {});
+  const resp = await fetch(url, options);
+  if (resp.status === 401) {
+    sessionStorage.removeItem("adminPassword");
+    adminPassword = "";
+    document.getElementById("backendPanel").classList.remove("open");
+    document.getElementById("btnBackendToggle").setAttribute("aria-expanded", "false");
+    document.getElementById("btnBackendToggle").textContent = "⚙ Backend Management";
+    setStatus("Admin password required or expired. Open Backend Management again.", true);
+  }
+  return resp;
+}
+
+async function ensureAdminAccess() {
+  const status = await (await fetch(API + "/api/admin/status")).json();
+  if (!status.protected) return true;
+  if (adminPassword) {
+    const check = await fetch(API + "/api/admin/verify", {
+      method: "POST",
+      headers: adminHeaders(),
+    });
+    if (check.ok) return true;
+  }
+  const pwd = prompt("Enter admin password to open Backend Management:");
+  if (!pwd) return false;
+  const resp = await fetch(API + "/api/admin/verify", {
+    method: "POST",
+    headers: { "X-Admin-Password": pwd },
+  });
+  if (!resp.ok) {
+    alert("Wrong password.");
+    return false;
+  }
+  adminPassword = pwd;
+  sessionStorage.setItem("adminPassword", pwd);
+  return true;
+}
+
+function initDatePicker() {
+  const el = document.getElementById("dateFilter");
+  el.max = new Date().toISOString().slice(0, 10);
+}
+
+function clearDateFilter() {
+  document.getElementById("dateFilter").value = "";
+  loadArticles();
+}
+
+async function toggleBackendPanel() {
+  const panel = document.getElementById("backendPanel");
+  const btn = document.getElementById("btnBackendToggle");
+  const open = !panel.classList.contains("open");
+  if (open) {
+    const allowed = await ensureAdminAccess();
+    if (!allowed) return;
+  }
+  panel.classList.toggle("open", open);
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  btn.textContent = open ? "✕ Close Backend Management" : "⚙ Backend Management";
+  if (open) {
+    await loadStats();
+    await loadEmailStatus();
+  }
+}
+
+function getSelectedPubDate() {
+  return document.getElementById("dateFilter").value || new Date().toISOString().slice(0, 10);
+}
+
+async function loadEmailStatus() {
+  try {
+    const data = await (await adminFetch(API + "/api/email-status")).json();
+    const hint = document.getElementById("emailHint");
+    if (!data.smtp_configured) {
+      hint.textContent = "Email: add SMTP settings to .env";
+      hint.style.color = "var(--danger)";
+      return;
+    }
+    const count = Object.keys(data.sectors_with_recipients || {}).length;
+    hint.textContent = count
+      ? `Email ready · ${count} sector team(s) configured`
+      : "Email: add addresses to sector_recipients.json";
+    hint.style.color = count ? "var(--success)" : "var(--accent)";
+  } catch (_) {}
+}
+
+function buildTabs() {
+  const tabsEl = document.getElementById("tabs");
+  tabsEl.innerHTML = "";
+  const allTab = document.createElement("div");
+  allTab.className = "tab active";
+  allTab.textContent = "All sectors";
+  allTab.onclick = () => selectTab("", allTab);
+  tabsEl.appendChild(allTab);
+
+  for (const [key, label] of Object.entries(SECTORS)) {
+    const tab = document.createElement("div");
+    tab.className = "tab";
+    tab.dataset.sector = key;
+    tab.innerHTML = `${label} <span class="count" id="count-${key}"></span>`;
+    tab.onclick = () => selectTab(key, tab);
+    tabsEl.appendChild(tab);
+  }
+}
+
+function isNewArticle(id) {
+  const until = newUntil[id];
+  return until && Date.now() < until;
+}
+
+function markNewArticles(ids) {
+  if (!ids || !ids.length) return;
+  const until = Date.now() + NEW_HIGHLIGHT_MS;
+  ids.forEach(id => { newUntil[id] = until; });
+  scheduleHighlightRefresh();
+}
+
+function scheduleHighlightRefresh() {
+  if (highlightTimer) clearTimeout(highlightTimer);
+  const ids = Object.keys(newUntil).map(Number);
+  if (!ids.length) return;
+  const nextExpiry = Math.min(...ids.map(id => newUntil[id]));
+  const wait = Math.max(500, nextExpiry - Date.now() + 300);
+  highlightTimer = setTimeout(() => {
+    const now = Date.now();
+    Object.keys(newUntil).forEach(key => {
+      if (newUntil[key] <= now) delete newUntil[key];
+    });
+    renderArticles();
+    scheduleHighlightRefresh();
+  }, wait);
+}
+
+function sortArticles(list) {
+  return [...list].sort((a, b) => {
+    const aNew = isNewArticle(a.id) ? 1 : 0;
+    const bNew = isNewArticle(b.id) ? 1 : 0;
+    if (aNew !== bNew) return bNew - aNew;
+    const aKey = a.fetched_at || a.pub_date || "";
+    const bKey = b.fetched_at || b.pub_date || "";
+    if (aKey !== bKey) return bKey.localeCompare(aKey);
+    return (b.id || 0) - (a.id || 0);
+  });
+}
+
+function selectTab(sector, el) {
+  currentSector = sector;
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  el.classList.add("active");
+  renderArticles();
+}
+
+async function loadStats() {
+  const stats = await (await adminFetch(API + "/api/stats")).json();
+  document.getElementById("statStrip").innerHTML = `
+    <div class="stat-card"><div class="stat-label">Total stored</div><div class="stat-value">${stats.total}</div></div>
+    <div class="stat-card highlight"><div class="stat-label">Relevant</div><div class="stat-value">${stats.relevant}</div></div>
+    <div class="stat-card"><div class="stat-label">Pending AI</div><div class="stat-value">${stats.unprocessed}</div></div>
+  `;
+}
+
+async function loadArticles() {
+  const pubDate = document.getElementById("dateFilter").value;
+  const search = document.getElementById("searchBox").value.trim();
+  const params = new URLSearchParams();
+  if (pubDate) params.set("pub_date", pubDate);
+  if (search) params.set("search", search);
+  const qs = params.toString();
+  const url = API + "/api/articles" + (qs ? `?${qs}` : "");
+  articlesCache = await (await fetch(url)).json();
+  updateTabCounts();
+  updateSearchCount(search);
+  renderArticles();
+}
+
+async function sendSectorEmails() {
+  const pubDate = getSelectedPubDate();
+  const dateLabel = document.getElementById("dateFilter").value
+    ? pubDate
+    : `${pubDate} (today — pick a date in calendar to send for another day)`;
+  if (!confirm(`Send sector emails for ${dateLabel}?\n\nEach team gets ONLY their sector's news.`)) return;
+
+  setBtnLoading("btnEmail", true);
+  setStatus("Sending sector emails ...");
+  try {
+    const resp = await adminFetch(API + `/api/send-email?pub_date=${encodeURIComponent(pubDate)}`, { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Email send failed");
+    const sent = (data.results || []).filter(r => r.status === "sent");
+    const detail = sent.map(r => `${r.sector_label}: ${r.articles} articles → ${r.recipients.length} recipient(s)`).join(" · ");
+    setStatus(`${data.message} ${detail}`);
+  } catch (e) {
+    setStatus(e.message, true);
+  } finally {
+    setBtnLoading("btnEmail", false);
+  }
+}
+
+async function refilterRideHailing() {
+  if (!confirm("Re-check all stored news against the new ride-hailing rules?\n\nIrrelevant ride-hailing tags will be removed.")) return;
+  setBtnLoading("btnRefilterRh", true);
+  setStatus("Refiltering ride hailing tags ...");
+  try {
+    const resp = await adminFetch(API + "/api/reconcile-ride-hailing", { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Refilter failed");
+    setStatus(data.message);
+    await loadArticles();
+    await loadStats();
+  } catch (e) {
+    setStatus(e.message, true);
+  } finally {
+    setBtnLoading("btnRefilterRh", false);
+  }
+}
+
+async function removeDuplicates() {
+  setBtnLoading("btnDedupe", true);
+  setStatus("Scanning for duplicate stories ...");
+  try {
+    const resp = await adminFetch(API + "/api/dedupe-all", { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Dedupe failed");
+    setStatus(data.message);
+    await loadArticles();
+    await loadStats();
+  } catch (e) {
+    setStatus(e.message, true);
+  } finally {
+    setBtnLoading("btnDedupe", false);
+  }
+}
+
+function runSearch() {
+  loadArticles();
+  const q = document.getElementById("searchBox").value.trim();
+  if (q) setStatus(`Showing results for "${q}". Click Clear to see all news.`);
+}
+
+function clearSearch() {
+  document.getElementById("searchBox").value = "";
+  setStatus("");
+  loadArticles();
+}
+
+function updateSearchCount(search) {
+  const el = document.getElementById("searchResultCount");
+  if (!search) { el.textContent = ""; return; }
+  el.textContent = `${articlesCache.length} result${articlesCache.length === 1 ? "" : "s"}`;
+}
+
+function getActiveSearch() {
+  return document.getElementById("searchBox").value.trim();
+}
+
+function updateTabCounts() {
+  const counts = {};
+  articlesCache.forEach(a => {
+    a.sectors.forEach(s => {
+      const key = s === "other_relevant" ? "cross_sector" : s;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+  });
+  for (const key of Object.keys(SECTORS)) {
+    const el = document.getElementById(`count-${key}`);
+    if (el) el.textContent = counts[key] || "";
+  }
+}
+
+function renderArticles() {
+  const grid = document.getElementById("grid");
+  const empty = document.getElementById("emptyState");
+  let list = articlesCache;
+  if (currentSector) {
+    list = list.filter(a =>
+      a.sectors.includes(currentSector) ||
+      (currentSector === "cross_sector" && a.sectors.includes("other_relevant"))
+    );
+  }
+
+  grid.innerHTML = "";
+  if (list.length === 0) {
+    empty.style.display = "block";
+    grid.style.display = "none";
+    const q = getActiveSearch();
+    if (q) {
+      empty.querySelector("h3").textContent = "No matching news";
+      empty.querySelector("p").textContent = `Nothing found for "${q}". Try another word or click Clear.`;
+    } else if (currentSector) {
+      empty.querySelector("h3").textContent = "No articles in this sector";
+      empty.querySelector("p").textContent = "Try another tab or use Search above.";
+    } else {
+      empty.querySelector("h3").textContent = "No articles yet";
+      empty.querySelector("p").textContent = "Check back later for new sector news.";
+    }
+    return;
+  }
+  empty.style.display = "none";
+  grid.style.display = "grid";
+
+  list = sortArticles(list);
+  list.forEach(a => {
+    const card = document.createElement("article");
+    card.className = "card" + (isNewArticle(a.id) ? " is-new" : "");
+    const newPill = isNewArticle(a.id) ? '<span class="new-pill">New</span>' : "";
+    const badges = a.sectors.map(s => `<span class="badge">${SECTORS[s] || s}</span>`).join("");
+    const sourceLabel = a.page ? `${a.source}, ${a.page}` : a.source;
+    const link = a.url ? `<a href="${a.url}" target="_blank" rel="noopener">Read article →</a>` : "";
+    const image = a.image_url
+      ? `<div class="card-image-wrap"><img class="card-image" src="${escapeAttr(a.image_url)}" alt="" loading="lazy" onerror="this.parentElement.remove()"></div>`
+      : "";
+    card.innerHTML = `
+      ${image}
+      <div class="card-badges">${newPill}${badges}</div>
+      <h2 class="card-headline">${escapeHtml(a.title)}</h2>
+      <p class="card-summary">${escapeHtml(a.summary || "")}</p>
+      <div class="card-meta">
+        <span>${escapeHtml(sourceLabel)} · ${a.pub_date}</span>
+        ${link}
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function escapeHtml(str) {
+  const d = document.createElement("div");
+  d.textContent = str || "";
+  return d.innerHTML;
+}
+
+function escapeAttr(str) {
+  return escapeHtml(str).replace(/"/g, "&quot;");
+}
+
+function setStatus(msg, isError=false) {
+  const el = document.getElementById("statusMsg");
+  el.textContent = msg;
+  el.classList.toggle("error", isError);
+}
+
+function setBtnLoading(id, loading) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.classList.toggle("loading", loading);
+  btn.disabled = loading;
+}
+
+async function uploadNewspaper(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  setBtnLoading("btnUpload", true);
+  setStatus(`Uploading ${file.name} ...`);
+  const formData = new FormData();
+  formData.append("file", file);
+  try {
+    const resp = await adminFetch(API + "/api/upload-newspaper", { method: "POST", body: formData });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Upload failed");
+    setStatus(data.message || `Parsed ${data.parsed} articles, ${data.inserted} new.`);
+    markNewArticles(data.new_ids || []);
+    await loadArticles(); await loadStats();
+  } catch (e) { setStatus(e.message, true); }
+  finally { setBtnLoading("btnUpload", false); event.target.value = ""; }
+}
+
+async function refreshRss() {
+  setBtnLoading("btnRss", true);
+  setStatus("Fetching RSS feeds ...");
+  try {
+    const resp = await adminFetch(API + "/api/refresh-rss", { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "RSS refresh failed");
+    setStatus(`${data.inserted} new, ${data.refreshed || 0} updated (${data.merged_duplicates || 0} duplicates removed).`);
+    markNewArticles(data.highlight_ids || data.new_ids || []);
+    await loadArticles(); await loadStats();
+  } catch (e) { setStatus(e.message, true); }
+  finally { setBtnLoading("btnRss", false); }
+}
+
+async function refreshNewsApi() {
+  setBtnLoading("btnNewsApi", true);
+  setStatus("Fetching NewsAPI ...");
+  try {
+    const resp = await adminFetch(API + "/api/refresh-newsapi", { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "NewsAPI refresh failed");
+    setStatus(`${data.inserted} new NewsAPI items saved — no Gemini needed.`);
+    markNewArticles(data.highlight_ids || data.new_ids || []);
+    await loadArticles(); await loadStats();
+  } catch (e) { setStatus(e.message, true); }
+  finally { setBtnLoading("btnNewsApi", false); }
+}
+
+async function processArticles() {
+  setBtnLoading("btnGemini", true);
+  setStatus("Processing with Gemini — this may take a while ...");
+  try {
+    const resp = await adminFetch(API + "/api/process", { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Processing failed");
+    let msg = `Done. Classified ${data.classified}, ${data.relevant} marked relevant.`;
+    if (data.message) msg += ` ${data.message}`;
+    setStatus(msg);
+    await loadArticles(); await loadStats();
+  } catch (e) { setStatus(e.message, true); }
+  finally { setBtnLoading("btnGemini", false); }
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "e_commerce": ["ecommerce-team@yourcompany.com"],
+  "quick_commerce": ["quickcommerce-team@yourcompany.com"],
+  "ride_hailing": ["ridehailing-team@yourcompany.com"],
+  "value_commerce": ["valuecommerce-team@yourcompany.com"],
+  "food_delivery": ["food-team@yourcompany.com"],
+  "fashion": ["fashion-team@yourcompany.com"],
+  "bpc": ["bpc-team@yourcompany.com"],
+  "e_logistics": ["logistics-team@yourcompany.com"],
+  "mobile_electronics": ["electronics-team@yourcompany.com"],
+  "cross_sector": ["macro-team@yourcompany.com"]
+}
