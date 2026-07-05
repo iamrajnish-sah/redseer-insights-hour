@@ -37,7 +37,13 @@ from sector_keywords import SECTOR_LABELS, normalize_sector_tags
 
 app = FastAPI(title="Redseer Insight Hour")
 
-database.init_db()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+
+@app.on_event("startup")
+def on_startup():
+    database.init_db()
 
 
 def _row_to_dict(row):
@@ -48,7 +54,7 @@ def _row_to_dict(row):
 
 @app.get("/")
 def serve_index():
-    return FileResponse(os.path.join(os.path.dirname(__file__), "static", "index.html"))
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 
 @app.get("/api/sectors")
@@ -319,4 +325,4 @@ def reconcile_ride_hailing(_: None = Depends(admin_auth.require_admin)):
     }
 
 
-app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
