@@ -182,17 +182,24 @@ def refresh_rss(_: None = Depends(admin_auth.require_admin)):
         dedupe_stats = dedupe.run_all_dedupes()
         merged = dedupe_stats["total_merged"]
         errors = stats.get("errors") or []
+        feeds_ok = stats.get("feeds_ok", 0)
+        feeds_total = stats.get("feeds_total", 0)
+        max_per_feed = stats.get("max_items_per_feed", 50)
         msg = (
-            "Keyword filter ON — matching RSS saved without Gemini."
-            if stats["keyword_filter"]
-            else "Keyword filter OFF — use Process with Gemini to classify."
+            f"Scanned {stats['fetched']} headlines from {feeds_ok}/{feeds_total} feeds "
+            f"(up to {max_per_feed} per feed). "
+            f"{stats['matched']} matched your keywords — "
+            f"{inserted} new, {len(refreshed_ids)} updated."
         )
         if errors:
-            msg += f" ({len(errors)} feed(s) failed — see errors.)"
+            msg += f" {len(errors)} feed(s) failed: {errors[0]}"
         return {
             "fetched": stats["fetched"],
             "matched": stats["matched"],
             "skipped": stats["skipped"],
+            "feeds_ok": feeds_ok,
+            "feeds_total": feeds_total,
+            "max_items_per_feed": max_per_feed,
             "inserted": inserted,
             "refreshed": len(refreshed_ids),
             "merged_duplicates": merged,
@@ -201,6 +208,7 @@ def refresh_rss(_: None = Depends(admin_auth.require_admin)):
             "highlight_ids": new_ids + refreshed_ids,
             "keyword_filter": stats["keyword_filter"],
             "errors": errors,
+            "feed_stats": stats.get("feed_stats") or [],
             "message": msg,
         }
     except Exception as exc:

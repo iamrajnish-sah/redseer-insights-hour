@@ -967,9 +967,7 @@ async function refreshRss() {
     const resp = await adminFetch(API + "/api/refresh-rss", { method: "POST" });
     const data = await readJson(resp);
     if (!resp.ok) throw new Error(data.detail || data.message || "RSS refresh failed");
-    let msg = `${data.inserted} new, ${data.refreshed || 0} updated (${data.merged_duplicates || 0} duplicates removed).`;
-    if (data.errors && data.errors.length) msg += ` ${data.errors.length} feed(s) failed.`;
-    setStatus(msg);
+    setStatus(data.message || `${data.inserted} new, ${data.refreshed || 0} updated.`);
     markNewArticles(data.highlight_ids || data.new_ids || []);
     await loadArticles(); await loadStats();
   } catch (e) { setStatus(e.message, true); }

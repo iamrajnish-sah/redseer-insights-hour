@@ -11,6 +11,7 @@ Set RSS_KEYWORD_FILTER=false to store every RSS item (old behaviour).
 import os
 import re
 import feedparser
+import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timezone
 from email.utils import parsedate_to_datetime
@@ -22,6 +23,10 @@ RSS_USER_AGENT = (
     "RedseerInsightHour/1.0 "
     "(+https://github.com/iamrajnish-sah/redseer-insights-hour)"
 )
+RSS_HEADERS = {
+    "User-Agent": RSS_USER_AGENT,
+    "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+}
 
 # Add the RSS feeds you want to track here.
 FEEDS = [
@@ -64,13 +69,16 @@ def keyword_filter_enabled():
 
 
 def _max_items_per_feed():
-    default = "12" if os.environ.get("VERCEL") else "30"
-    return int(os.environ.get("RSS_MAX_ITEMS", default))
+    """How many recent headlines to scan per feed (not a total cap). Default 50."""
+    return int(os.environ.get("RSS_MAX_ITEMS", "50"))
 
 
 def _max_workers():
-    default = "6" if os.environ.get("VERCEL") else "8"
-    return int(os.environ.get("RSS_MAX_WORKERS", default))
+    return int(os.environ.get("RSS_MAX_WORKERS", "8"))
+
+
+def _fetch_timeout():
+    return int(os.environ.get("RSS_FETCH_TIMEOUT", "15"))
 
 
 def _clean_html(raw):
@@ -143,15 +151,34 @@ def _entry_pub_date(entry):
     return str(date.today())
 
 
-def fetch_feed(source_name, feed_url, max_items=30, apply_keyword_filter=True):
-    articles = []
-    parsed = feedparser.parse(feed_url, agent=RSS_USER_AGENT)
+def _download_feed(feed_url):
+    """Fetch RSS XML over HTTP (more reliable on Vercel than feedparser.parse(url))."""
+    resp = requests.get(
+        feed_url,
+        headers=RSS_HEADERS,
+        timeout=_fetch_timeout(),
+    )
+    resp.raise_for_status()
+    return resp.content
 
-    if parsed.bozo and not parsed.entries:
-        print(f"  [warning] could not fetch/parse feed: {source_name} ({feed_url})")
+
+def fetch_feed(source_name, feed_url, max_items=50, apply_keyword_filter=True):
+    articles = []
+    raw_count = 0
+
+    try:
+        content = _download_feed(feed_url)
+        parsed = feedparser.parse(content)
+    except Exception as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    if not parsed.entries:
+        if parsed.bozo:
+            raise RuntimeError(getattr(parsed, "bozo_exception", "empty or invalid feed"))
         return articles, 0
 
     entries = parsed.entries[:max_items]
+    raw_count = len(entries)
     for entry in entries:
         title = entry.get("title", "").strip()
         if not title:
@@ -176,7 +203,19 @@ def fetch_feed(source_name, feed_url, max_items=30, apply_keyword_filter=True):
                 continue
         articles.append(article)
 
-    return articles, len(entries)
+    return articles, raw_count
+
+
+def _fetch_feed_with_retry(source_name, feed_url, max_items, apply_filter):
+    last_error = None
+    for attempt in range(2):
+        try:
+            return fetch_feed(source_name, feed_url, max_items, apply_filter)
+        except Exception as exc:
+            last_error = exc
+            if attempt == 0:
+                print(f"  [info] RSS retry for {source_name} ...")
+    raise last_error
 
 
 def fetch_all(feeds=None, max_items_per_feed=None):
@@ -186,10 +225,14 @@ def fetch_all(feeds=None, max_items_per_feed=None):
     all_articles = []
     raw_total = 0
     errors = []
+    feed_stats = []
+    feeds_ok = 0
 
     with ThreadPoolExecutor(max_workers=_max_workers()) as pool:
         futures = {
-            pool.submit(fetch_feed, name, url, max_items, apply_filter): name
+            pool.submit(
+                _fetch_feed_with_retry, name, url, max_items, apply_filter
+            ): name
             for name, url in feeds
         }
         for future in as_completed(futures):
@@ -198,9 +241,16 @@ def fetch_all(feeds=None, max_items_per_feed=None):
                 items, raw_count = future.result()
                 raw_total += raw_count
                 all_articles.extend(items)
-                print(f"  RSS {name}: {len(items)} kept of {raw_count}")
+                feeds_ok += 1
+                feed_stats.append(
+                    {"feed": name, "scanned": raw_count, "matched": len(items), "ok": True}
+                )
+                print(f"  RSS {name}: {len(items)} matched of {raw_count} scanned")
             except Exception as exc:
                 errors.append(f"{name}: {exc}")
+                feed_stats.append(
+                    {"feed": name, "scanned": 0, "matched": 0, "ok": False, "error": str(exc)}
+                )
                 print(f"  [warning] RSS failed for {name}: {exc}")
 
     stats = {
@@ -208,13 +258,22 @@ def fetch_all(feeds=None, max_items_per_feed=None):
         "matched": len(all_articles),
         "skipped": max(0, raw_total - len(all_articles)),
         "keyword_filter": apply_filter,
+        "feeds_total": len(feeds),
+        "feeds_ok": feeds_ok,
+        "feeds_failed": len(errors),
+        "max_items_per_feed": max_items,
         "errors": errors,
+        "feed_stats": feed_stats,
     }
     return all_articles, stats
 
 
 if __name__ == "__main__":
     arts, stats = fetch_all()
-    print(f"\nRSS: {stats['matched']} kept, {stats['skipped']} skipped (filter={'on' if stats['keyword_filter'] else 'off'})")
+    print(
+        f"\nRSS: scanned {stats['fetched']} headlines from "
+        f"{stats['feeds_ok']}/{stats['feeds_total']} feeds, "
+        f"{stats['matched']} matched keywords"
+    )
     for a in arts[:5]:
         print(f"- [{', '.join(a.sectors)}] {a.title}")
