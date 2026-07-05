@@ -1,5 +1,10 @@
 {
   "env": {
     "PYTHONPATH": "."
+  },
+  "functions": {
+    "app.py": {
+      "maxDuration": 60
+    }
   }
 }

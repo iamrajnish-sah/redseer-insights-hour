@@ -9,6 +9,8 @@ Layers:
 """
 
 import difflib
+import os
+import json
 import re
 
 import database
@@ -57,10 +59,12 @@ def find_and_mark_duplicates(pub_date=None, high_threshold=0.82):
 
 
 def run_all_dedupes(pub_date=None):
-    """URL + exact title + fuzzy passes."""
+    """URL + exact title + fuzzy passes (skip fuzzy on Vercel for speed)."""
     url_merged = database.dedupe_by_url()
     title_merged = database.dedupe_by_title()
-    fuzzy_merged = find_and_mark_duplicates(pub_date=pub_date)
+    fuzzy_merged = 0
+    if not os.environ.get("VERCEL"):
+        fuzzy_merged = find_and_mark_duplicates(pub_date=pub_date)
     return {
         "url_merged": url_merged,
         "title_merged": title_merged,

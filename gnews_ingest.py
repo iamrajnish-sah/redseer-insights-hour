@@ -13,7 +13,7 @@ import requests
 from dataclasses import dataclass, field
 from datetime import date
 
-from sector_keywords import NEWSAPI_QUERIES, match_sectors, make_summary
+from sector_keywords import GNEWS_QUERIES, match_sectors, make_summary
 from dedupe import normalize_title
 
 GNEWS_URL = "https://gnews.io/api/v4/search"
@@ -43,6 +43,11 @@ def _normalize_url(url):
     return url.strip().rstrip("/") or url.strip()
 
 
+def _max_results():
+    default = "8" if os.environ.get("VERCEL") else "10"
+    return int(os.environ.get("GNEWS_MAX_RESULTS", default))
+
+
 def _prepare_article(article, query_sector):
     sectors = match_sectors(article.title, article.body, article.subtitle)
     if query_sector == "ride_hailing":
@@ -64,13 +69,16 @@ def fetch_query(query_label, query, api_key, max_results=10, language="en", coun
         "max": max_results,
         "apikey": api_key,
     }
-    resp = requests.get(GNEWS_URL, params=params, timeout=15)
+    resp = requests.get(GNEWS_URL, params=params, timeout=12)
     if resp.status_code != 200:
-        print(f"  [warning] GNews error for '{query_label}': {resp.status_code} {resp.text[:200]}")
-        return []
+        msg = resp.text[:200]
+        print(f"  [warning] GNews error for '{query_label}': {resp.status_code} {msg}")
+        return [], 0, f"{query_label}: HTTP {resp.status_code}"
 
+    payload = resp.json()
+    raw_items = payload.get("articles") or []
     articles = []
-    for item in resp.json().get("articles", []):
+    for item in raw_items:
         title = (item.get("title") or "").strip()
         if not title:
             continue
@@ -89,26 +97,32 @@ def fetch_query(query_label, query, api_key, max_results=10, language="en", coun
         prepared = _prepare_article(article, query_label)
         if prepared:
             articles.append(prepared)
-    return articles
+    return articles, len(raw_items), None
 
 
-def fetch_all(queries=None, max_results=10):
+def fetch_all(queries=None, max_results=None):
     api_key = os.environ.get("GNEWSAPIKEY") or os.environ.get("GNEWS_API_KEY")
     if not api_key:
         print("  [warning] GNEWSAPIKEY not set — skipping GNews ingestion.")
-        return [], {"fetched": 0, "matched": 0, "skipped": 0}
+        return [], {"fetched": 0, "raw_from_api": 0, "matched": 0, "skipped": 0, "errors": ["GNEWSAPIKEY not set"]}
 
-    queries = queries or NEWSAPI_QUERIES
+    queries = queries or GNEWS_QUERIES
+    max_results = max_results or _max_results()
     all_articles = []
     seen_urls = set()
     seen_titles = set()
     raw_total = 0
+    raw_from_api = 0
     skipped_dupes = 0
+    errors = []
 
     for label, q in queries.items():
         print(f"Fetching GNews (IN): {label} ...")
-        items = fetch_query(label, q, api_key, max_results=max_results)
+        items, raw_count, err = fetch_query(label, q, api_key, max_results=max_results)
+        raw_from_api += raw_count
         raw_total += len(items)
+        if err:
+            errors.append(err)
         kept = 0
         for article in items:
             url = _normalize_url(article.url)
@@ -125,12 +139,14 @@ def fetch_all(queries=None, max_results=10):
                 seen_titles.add(title_key)
             all_articles.append(article)
             kept += 1
-        print(f"  -> {kept} kept")
+        print(f"  -> {kept} kept ({raw_count} from API)")
 
     stats = {
         "fetched": raw_total,
+        "raw_from_api": raw_from_api,
         "matched": len(all_articles),
         "skipped": skipped_dupes,
+        "errors": errors,
     }
     return all_articles, stats
 

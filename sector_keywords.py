@@ -239,6 +239,19 @@ NEWSAPI_QUERIES = {
     "mobile_electronics": "smartphone India OR electronics retail India OR Samsung India OR Apple India",
 }
 
+# Simpler queries for GNews.io (works better than long boolean strings)
+GNEWS_QUERIES = {
+    "e_commerce": "Flipkart OR Amazon India OR Myntra OR Meesho",
+    "quick_commerce": "Blinkit OR Zepto OR Instamart OR quick commerce",
+    "ride_hailing": "Ola OR Rapido OR Uber India OR Namma Yatri OR BluSmart",
+    "value_commerce": "DMart OR Reliance Retail OR value retail India",
+    "food_delivery": "Zomato OR Swiggy OR food delivery India",
+    "fashion": "fashion retail India OR Myntra OR apparel India",
+    "bpc": "skincare India OR cosmetics India OR Mamaearth",
+    "e_logistics": "Delhivery OR logistics India OR last mile delivery",
+    "mobile_electronics": "smartphone India OR Samsung India OR Apple India",
+}
+
 
 def normalize_sector_tags(sectors):
     normalized = []

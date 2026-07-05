@@ -176,27 +176,35 @@ async def upload_newspaper(
 
 @app.post("/api/refresh-rss")
 def refresh_rss(_: None = Depends(admin_auth.require_admin)):
-    articles, stats = rss_ingest.fetch_all()
-    inserted, new_ids, refreshed_ids = database.insert_articles(articles)
-    dedupe_stats = dedupe.run_all_dedupes()
-    merged = dedupe_stats["total_merged"]
-    return {
-        "fetched": stats["fetched"],
-        "matched": stats["matched"],
-        "skipped": stats["skipped"],
-        "inserted": inserted,
-        "refreshed": len(refreshed_ids),
-        "merged_duplicates": merged,
-        "new_ids": new_ids,
-        "refreshed_ids": refreshed_ids,
-        "highlight_ids": new_ids + refreshed_ids,
-        "keyword_filter": stats["keyword_filter"],
-        "message": (
+    try:
+        articles, stats = rss_ingest.fetch_all()
+        inserted, new_ids, refreshed_ids = database.insert_articles(articles)
+        dedupe_stats = dedupe.run_all_dedupes()
+        merged = dedupe_stats["total_merged"]
+        errors = stats.get("errors") or []
+        msg = (
             "Keyword filter ON — matching RSS saved without Gemini."
             if stats["keyword_filter"]
             else "Keyword filter OFF — use Process with Gemini to classify."
-        ),
-    }
+        )
+        if errors:
+            msg += f" ({len(errors)} feed(s) failed — see errors.)"
+        return {
+            "fetched": stats["fetched"],
+            "matched": stats["matched"],
+            "skipped": stats["skipped"],
+            "inserted": inserted,
+            "refreshed": len(refreshed_ids),
+            "merged_duplicates": merged,
+            "new_ids": new_ids,
+            "refreshed_ids": refreshed_ids,
+            "highlight_ids": new_ids + refreshed_ids,
+            "keyword_filter": stats["keyword_filter"],
+            "errors": errors,
+            "message": msg,
+        }
+    except Exception as exc:
+        raise HTTPException(500, f"RSS refresh failed: {exc}") from exc
 
 
 @app.post("/api/refresh-newsapi")
@@ -225,22 +233,38 @@ def refresh_newsapi(_: None = Depends(admin_auth.require_admin)):
 def refresh_gnews(_: None = Depends(admin_auth.require_admin)):
     if not (os.environ.get("GNEWSAPIKEY") or os.environ.get("GNEWS_API_KEY")):
         raise HTTPException(400, "GNEWSAPIKEY is not set on the server")
-    articles, stats = gnews_ingest.fetch_all()
-    inserted, new_ids, refreshed_ids = database.insert_articles(articles)
-    dedupe_stats = dedupe.run_all_dedupes()
-    merged = dedupe_stats["total_merged"]
-    return {
-        "fetched": stats["fetched"],
-        "matched": stats["matched"],
-        "skipped": stats["skipped"],
-        "inserted": inserted,
-        "refreshed": len(refreshed_ids),
-        "merged_duplicates": merged,
-        "new_ids": new_ids,
-        "refreshed_ids": refreshed_ids,
-        "highlight_ids": new_ids + refreshed_ids,
-        "message": "GNews India items pre-tagged by sector — no Gemini needed.",
-    }
+    try:
+        articles, stats = gnews_ingest.fetch_all()
+        inserted, new_ids, refreshed_ids = database.insert_articles(articles)
+        dedupe_stats = dedupe.run_all_dedupes()
+        merged = dedupe_stats["total_merged"]
+        errors = stats.get("errors") or []
+        raw_from_api = stats.get("raw_from_api", stats["fetched"])
+        msg = "GNews India items pre-tagged by sector — no Gemini needed."
+        if not articles and raw_from_api == 0 and errors:
+            msg = f"GNews returned no articles. {'; '.join(errors[:3])}"
+        elif not articles and raw_from_api > 0:
+            msg = (
+                f"GNews returned {raw_from_api} headline(s) but none matched sector keywords."
+            )
+        elif errors:
+            msg += f" ({len(errors)} query error(s).)"
+        return {
+            "fetched": stats["fetched"],
+            "raw_from_api": raw_from_api,
+            "matched": stats["matched"],
+            "skipped": stats["skipped"],
+            "inserted": inserted,
+            "refreshed": len(refreshed_ids),
+            "merged_duplicates": merged,
+            "new_ids": new_ids,
+            "refreshed_ids": refreshed_ids,
+            "highlight_ids": new_ids + refreshed_ids,
+            "errors": errors,
+            "message": msg,
+        }
+    except Exception as exc:
+        raise HTTPException(500, f"GNews refresh failed: {exc}") from exc
 
 
 @app.post("/api/process")
