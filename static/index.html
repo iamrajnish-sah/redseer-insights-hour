@@ -516,6 +516,7 @@
       <input type="file" id="uploadInput" accept=".epub,.pdf,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.txt" onchange="uploadNewspaper(event)">
       <button class="btn btn-ghost" id="btnRss" onclick="refreshRss()">↻ Refresh RSS</button>
       <button class="btn btn-ghost" id="btnNewsApi" onclick="refreshNewsApi()">↻ Refresh NewsAPI</button>
+      <button class="btn btn-ghost" id="btnGNews" onclick="refreshGNews()">↻ Refresh GNews</button>
       <button class="btn btn-teal" id="btnGemini" onclick="processArticles()">✦ Process with Gemini</button>
       <button class="btn btn-email" id="btnEmail" onclick="sendSectorEmails()">✉ Send Email</button>
       <button class="btn btn-ghost btn-sm" id="btnRefilterRh" onclick="refilterRideHailing()">↺ Refilter ride hailing</button>
@@ -975,6 +976,20 @@ async function refreshNewsApi() {
     await loadArticles(); await loadStats();
   } catch (e) { setStatus(e.message, true); }
   finally { setBtnLoading("btnNewsApi", false); }
+}
+
+async function refreshGNews() {
+  setBtnLoading("btnGNews", true);
+  setStatus("Fetching GNews India ...");
+  try {
+    const resp = await adminFetch(API + "/api/refresh-gnews", { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "GNews refresh failed");
+    setStatus(`${data.inserted} new GNews items saved (${data.merged_duplicates || 0} duplicates removed).`);
+    markNewArticles(data.highlight_ids || data.new_ids || []);
+    await loadArticles(); await loadStats();
+  } catch (e) { setStatus(e.message, true); }
+  finally { setBtnLoading("btnGNews", false); }
 }
 
 async function processArticles() {

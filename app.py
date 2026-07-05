@@ -28,6 +28,7 @@ import database
 import newspaper_parser
 import rss_ingest
 import newsapi_ingest
+import gnews_ingest
 import classify_and_summarize
 import dedupe
 import email_digest
@@ -217,6 +218,28 @@ def refresh_newsapi(_: None = Depends(admin_auth.require_admin)):
         "refreshed_ids": refreshed_ids,
         "highlight_ids": new_ids + refreshed_ids,
         "message": "NewsAPI items pre-tagged by sector — no Gemini needed.",
+    }
+
+
+@app.post("/api/refresh-gnews")
+def refresh_gnews(_: None = Depends(admin_auth.require_admin)):
+    if not (os.environ.get("GNEWSAPIKEY") or os.environ.get("GNEWS_API_KEY")):
+        raise HTTPException(400, "GNEWSAPIKEY is not set on the server")
+    articles, stats = gnews_ingest.fetch_all()
+    inserted, new_ids, refreshed_ids = database.insert_articles(articles)
+    dedupe_stats = dedupe.run_all_dedupes()
+    merged = dedupe_stats["total_merged"]
+    return {
+        "fetched": stats["fetched"],
+        "matched": stats["matched"],
+        "skipped": stats["skipped"],
+        "inserted": inserted,
+        "refreshed": len(refreshed_ids),
+        "merged_duplicates": merged,
+        "new_ids": new_ids,
+        "refreshed_ids": refreshed_ids,
+        "highlight_ids": new_ids + refreshed_ids,
+        "message": "GNews India items pre-tagged by sector — no Gemini needed.",
     }
 
 

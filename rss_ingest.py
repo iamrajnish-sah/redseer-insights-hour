@@ -20,8 +20,16 @@ from sector_keywords import match_sectors, make_summary
 # Add the RSS feeds you want to track here.
 FEEDS = [
     ("LiveMint - Companies", "https://www.livemint.com/rss/companies"),
+    ("LiveMint - Markets", "https://www.livemint.com/rss/markets"),
     ("Economic Times - Tech", "https://economictimes.indiatimes.com/tech/rssfeeds/13357270.cms"),
+    ("Economic Times - Markets", "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"),
     ("Moneycontrol - Business", "https://www.moneycontrol.com/rss/business.xml"),
+    ("The Hindu - Business", "https://www.thehindu.com/business/feeder/default.rss"),
+    ("Business Standard", "https://www.business-standard.com/rss/home_page_top.rss"),
+    ("Financial Express", "https://www.financialexpress.com/feed/"),
+    ("Times of India - Business", "https://timesofindia.indiatimes.com/rssfeeds/1898055.cms"),
+    ("NDTV Profit", "https://feeds.feedburner.com/ndtvprofit-latest"),
+    ("YourStory", "https://yourstory.com/feed/"),
     ("Inc42", "https://inc42.com/feed/"),
     ("Entrackr", "https://entrackr.com/feed"),
 ]
