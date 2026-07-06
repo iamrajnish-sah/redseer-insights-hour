@@ -100,34 +100,156 @@ def _clean_html(raw):
     return re.sub("<[^<]+?>", "", raw or "").strip()
 
 
-def _entry_image_url(entry):
+_IMG_SRC_RE = re.compile(r"""<img[^>]+src=['"]([^'"]+)['"]""", re.I)
+_OG_IMAGE_PATTERNS = [
+    re.compile(
+        r"""<meta[^>]+property=['"]og:image(?::secure_url)?['"][^>]+content=['"]([^'"]+)['"]""",
+        re.I,
+    ),
+    re.compile(
+        r"""<meta[^>]+content=['"]([^'"]+)['"][^>]+property=['"]og:image(?::secure_url)?['"]""",
+        re.I,
+    ),
+    re.compile(
+        r"""<meta[^>]+name=['"]twitter:image(?::src)?['"][^>]+content=['"]([^'"]+)['"]""",
+        re.I,
+    ),
+    re.compile(
+        r"""<meta[^>]+content=['"]([^'"]+)['"][^>]+name=['"]twitter:image(?::src)?['"]""",
+        re.I,
+    ),
+]
+
+
+def _entry_html_fields(entry):
+    """Collect raw HTML fragments from RSS/Atom entry fields."""
+    fields = []
+    for name in ("summary", "description", "subtitle"):
+        value = entry.get(name)
+        if value:
+            fields.append(value)
+
+    content = entry.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict):
+                value = block.get("value")
+            else:
+                value = getattr(block, "value", None)
+            if value:
+                fields.append(value)
+    elif content:
+        fields.append(content)
+
+    return fields
+
+
+def _is_bad_thumbnail(url):
+    lowered = (url or "").lower()
+    if not lowered or lowered.startswith("data:"):
+        return True
+    junk = (
+        "pixel",
+        "1x1",
+        "spacer",
+        "blank.gif",
+        "transparent.gif",
+        "favicon",
+        "emoji",
+        "gravatar.com/avatar",
+    )
+    return any(token in lowered for token in junk)
+
+
+def _pick_best_image_url(html_fragments):
+    candidates = []
+    for html in html_fragments:
+        for match in _IMG_SRC_RE.finditer(html or ""):
+            url = match.group(1).strip()
+            if _is_bad_thumbnail(url):
+                continue
+            candidates.append(url)
+
+    for url in candidates:
+        if "googleusercontent.com" in url or "ggpht.com" in url:
+            return url
+    for url in candidates:
+        if any(token in url for token in ("/wp-content/", "/uploads/", "/images/", "cdn")):
+            return url
+    return candidates[0] if candidates else None
+
+
+def _og_per_feed_limit():
+    return int(os.environ.get("RSS_OG_PER_FEED", "12"))
+
+
+def _fetch_og_image(url):
+    """Fetch og:image from article HTML (no Gemini). Used for Google News fallbacks."""
+    if not url:
+        return None
+    try:
+        resp = requests.get(
+            url,
+            headers=RSS_HEADERS,
+            timeout=_fetch_timeout(),
+            allow_redirects=True,
+            stream=True,
+        )
+        resp.raise_for_status()
+        chunk = b""
+        for part in resp.iter_content(8192):
+            chunk += part
+            if len(chunk) >= 65536:
+                break
+        html = chunk.decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+
+    for pattern in _OG_IMAGE_PATTERNS:
+        match = pattern.search(html)
+        if match:
+            image_url = match.group(1).strip()
+            if image_url and not _is_bad_thumbnail(image_url):
+                return image_url
+    return None
+
+
+def _entry_image_url(entry, origin=None, og_budget=None):
     """Best-effort thumbnail from RSS/Atom entry metadata or embedded HTML."""
     media_content = entry.get("media_content") or getattr(entry, "media_content", None) or []
     for item in media_content:
         url = item.get("url")
         medium = (item.get("medium") or item.get("type") or "").lower()
-        if url and medium not in ("video", "audio"):
+        if url and medium not in ("video", "audio") and not _is_bad_thumbnail(url):
             return url
 
     media_thumbnail = entry.get("media_thumbnail") or getattr(entry, "media_thumbnail", None) or []
     if media_thumbnail:
         url = media_thumbnail[0].get("url")
-        if url:
+        if url and not _is_bad_thumbnail(url):
             return url
 
     for enc in entry.get("enclosures") or []:
         mime = (enc.get("type") or "").lower()
         href = enc.get("href") or enc.get("url")
-        if href and mime.startswith("image/"):
+        if href and mime.startswith("image/") and not _is_bad_thumbnail(href):
             return href
 
-    for field_name in ("summary", "description", "content"):
-        html = entry.get(field_name) or ""
-        if not html:
-            continue
-        match = re.search(r"""<img[^>]+src=['"]([^'"]+)['"]""", html, re.I)
-        if match:
-            return match.group(1).strip()
+    for link in entry.get("links") or []:
+        mime = (link.get("type") or "").lower()
+        href = link.get("href")
+        if href and mime.startswith("image/") and not _is_bad_thumbnail(href):
+            return href
+
+    image_url = _pick_best_image_url(_entry_html_fields(entry))
+    if image_url:
+        return image_url
+
+    if origin == "google_news" and og_budget is not None and og_budget[0] > 0:
+        link = entry.get("link", "")
+        if link:
+            og_budget[0] -= 1
+            return _fetch_og_image(link)
 
     return None
 
@@ -195,6 +317,7 @@ def fetch_feed(source_name, feed_url, max_items=80, apply_keyword_filter=True):
 
     entries = parsed.entries[:max_items]
     raw_count = len(entries)
+    og_budget = [_og_per_feed_limit()] if origin == "google_news" else None
     for entry in entries:
         title = entry.get("title", "").strip()
         if not title:
@@ -211,7 +334,7 @@ def fetch_feed(source_name, feed_url, max_items=80, apply_keyword_filter=True):
             byline=entry.get("author", ""),
             body=summary,
             url=link,
-            image_url=_entry_image_url(entry),
+            image_url=_entry_image_url(entry, origin=origin, og_budget=og_budget),
             origin=origin,
         )
         if apply_keyword_filter:

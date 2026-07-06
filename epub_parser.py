@@ -9,6 +9,8 @@ These epubs are just zip files. Each page lives at OEBPS/page-XXX/page-XXX.xhtml
 and contains one or more <div class="art-cnt" id="art-N"> blocks, one per article.
 """
 
+import base64
+import os
 import zipfile
 import re
 from bs4 import BeautifulSoup
@@ -28,6 +30,7 @@ class Article:
     body: str = ""
     origin: str = "epub"
     url: str = None
+    image_url: str = None
 
     def full_text(self):
         return f"{self.title}\n{self.subtitle}\n{self.body}".strip()
@@ -82,6 +85,83 @@ def _guess_source_and_date(epub_path: str):
     return guess_source_and_date(epub_path)
 
 
+_MAX_EPUB_IMAGE_BYTES = int(os.environ.get("EPUB_MAX_IMAGE_BYTES", "180000"))
+
+_MIME_BY_EXT = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+}
+
+
+def _guess_image_mime(path: str, data: bytes) -> str:
+    ext = "." + path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    if ext in _MIME_BY_EXT:
+        return _MIME_BY_EXT[ext]
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    return "image/jpeg"
+
+
+def _resolve_epub_asset_path(page_file: str, src: str) -> str | None:
+    src = (src or "").strip().split("#")[0].split("?")[0]
+    if not src or src.startswith("data:"):
+        return None
+    if src.startswith(("http://", "https://")):
+        return None
+    page_dir = "/".join(page_file.split("/")[:-1])
+    if src.startswith("/"):
+        return src.lstrip("/")
+    return f"{page_dir}/{src}".replace("//", "/")
+
+
+def _read_epub_image(z: zipfile.ZipFile, page_file: str, src: str) -> bytes | None:
+    zip_path = _resolve_epub_asset_path(page_file, src)
+    if not zip_path:
+        return None
+    try:
+        return z.read(zip_path)
+    except KeyError:
+        page_dir = "/".join(page_file.split("/")[:-1])
+        basename = src.split("/")[-1]
+        try:
+            return z.read(f"{page_dir}/{basename}")
+        except KeyError:
+            return None
+
+
+def _art_image_data_url(art_div, page_file: str, z: zipfile.ZipFile) -> str | None:
+    """Embed the first article photo from the EPUB as a data URL (no API calls)."""
+    search_roots = [art_div]
+    parent = art_div.parent
+    if parent and parent.name in ("div", "article", "section"):
+        search_roots.append(parent)
+
+    seen_src = set()
+    for root in search_roots:
+        for img in root.select("img"):
+            src = img.get("src") or img.get("data-src") or img.get("data-original")
+            if not src or src in seen_src:
+                continue
+            seen_src.add(src)
+            data = _read_epub_image(z, page_file, src)
+            if not data or len(data) < 100 or len(data) > _MAX_EPUB_IMAGE_BYTES:
+                continue
+            mime = _guess_image_mime(src or "", data)
+            if not mime.startswith("image/"):
+                continue
+            encoded = base64.b64encode(data).decode("ascii")
+            return f"data:{mime};base64,{encoded}"
+    return None
+
+
 def parse_epub(epub_path: str) -> list[Article]:
     """Extract all articles from a newspaper epub file."""
     source, pub_date = _guess_source_and_date(epub_path)
@@ -126,6 +206,7 @@ def parse_epub(epub_path: str) -> list[Article]:
                         subtitle=subtitle,
                         byline=byline,
                         body=body,
+                        image_url=_art_image_data_url(art_div, page_file, z),
                     )
                 )
 
