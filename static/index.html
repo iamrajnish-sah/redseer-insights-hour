@@ -775,17 +775,87 @@ function newspaperThemeClass(sectors) {
   return NEWSPAPER_THEMES[key] || "theme-blue";
 }
 
-function buildCardMedia(a) {
-  if (isNewspaperArticle(a)) return "";
-  const url = a.image_url || "";
-  if (!url || url.startsWith("data:")) return "";
-  return `<div class="card-media"><img class="card-image" src="${escapeAttr(url)}" alt="" loading="lazy" onerror="this.closest('.card-media')?.remove();"></div>`;
+function isGoogleNewsArticle(a) {
+  const origin = (a.origin || "").toLowerCase();
+  const src = (a.source || "").toLowerCase();
+  return origin === "google_news" || src.startsWith("google news");
 }
 
-function buildNewspaperStrip(a) {
-  if (!isNewspaperArticle(a)) return "";
-  const pageLabel = a.page ? a.page.replace(/-/g, " ") : "";
-  return `<div class="card-np-strip"><span>${escapeHtml(a.source || "Newspaper")}</span>${pageLabel ? `<span>${escapeHtml(pageLabel)}</span>` : ""}</div>`;
+function isBadCardImage(url) {
+  if (!url || url.startsWith("data:")) return true;
+  const u = url.toLowerCase();
+  const junk = [
+    "favicon", "pixel", "1x1", "placeholder", "default-image", "no-image",
+    "gstatic.com/images/branding", "google.com/favicon", "apple-touch-icon",
+    "/logo.", "/logo/", "publisher-logo", "site-icon",
+  ];
+  if (junk.some(token => u.includes(token))) return true;
+  if (u.includes("googleusercontent.com") || u.includes("ggpht.com")) {
+    const sizes = [
+      ...(u.match(/(?:[=/-]w|s0-w)(\d+)/gi) || []).map(m => parseInt(m.replace(/\D/g, ""), 10)),
+      ...(u.match(/(?:[=/-]h|s0-h)(\d+)/gi) || []).map(m => parseInt(m.replace(/\D/g, ""), 10)),
+    ].filter(n => n > 0);
+    if (sizes.length && Math.max(...sizes) < 200) return true;
+  }
+  return false;
+}
+
+function hasUsableImage(a) {
+  const url = (a.image_url || "").toLowerCase();
+  if (!url || url.startsWith("data:")) return false;
+  if (isGoogleNewsArticle(a)) {
+    if (
+      url.includes("googleusercontent.com") ||
+      url.includes("ggpht.com") ||
+      url.includes("gstatic.com") ||
+      url.includes("news.google.com")
+    ) {
+      return false;
+    }
+  }
+  return !isBadCardImage(a.image_url);
+}
+
+function useHighlightCard(a) {
+  if (isNewspaperArticle(a)) return true;
+  if (isGoogleNewsArticle(a) && !hasUsableImage(a)) return true;
+  return false;
+}
+
+function highlightThemeClass(a) {
+  if (isGoogleNewsArticle(a) && !hasUsableImage(a)) return "theme-teal";
+  return newspaperThemeClass(a.sectors);
+}
+
+function buildCardMedia(a) {
+  if (useHighlightCard(a)) return "";
+  const url = a.image_url || "";
+  return `<div class="card-media"><img class="card-image" src="${escapeAttr(url)}" alt="" loading="lazy" onerror="handleCardImageError(this)"></div>`;
+}
+
+function handleCardImageError(img) {
+  const card = img.closest(".card");
+  img.closest(".card-media")?.remove();
+  if (!card || card.dataset.highlightApplied === "1") return;
+  card.dataset.highlightApplied = "1";
+  card.classList.add("card-newspaper", "theme-teal");
+  const body = card.querySelector(".card-body");
+  const strip = document.createElement("div");
+  strip.className = "card-np-strip";
+  strip.innerHTML = "<span>Google News</span><span>Web preview</span>";
+  if (body) card.insertBefore(strip, body);
+}
+
+function buildFeedStrip(a) {
+  if (isNewspaperArticle(a)) {
+    const pageLabel = a.page ? a.page.replace(/-/g, " ") : "";
+    return `<div class="card-np-strip"><span>${escapeHtml(a.source || "Newspaper")}</span>${pageLabel ? `<span>${escapeHtml(pageLabel)}</span>` : ""}</div>`;
+  }
+  if (isGoogleNewsArticle(a) && !hasUsableImage(a)) {
+    const sector = (a.source || "").replace(/^Google News — /i, "").replace(/_/g, " ");
+    return `<div class="card-np-strip"><span>Google News</span>${sector ? `<span>${escapeHtml(sector)}</span>` : ""}</div>`;
+  }
+  return "";
 }
 
 function displayText(str) {
@@ -1201,18 +1271,19 @@ function renderArticles() {
   list = sortArticles(list);
   list.forEach(a => {
     const card = document.createElement("article");
-    const np = isNewspaperArticle(a);
+    const highlight = useHighlightCard(a);
     card.className = "card"
-      + (np ? " card-newspaper " + newspaperThemeClass(a.sectors) : "")
+      + (highlight ? " card-newspaper " + highlightThemeClass(a) : "")
       + (isNewArticle(a.id) ? " is-new" : "");
     const newPill = isNewArticle(a.id) ? '<span class="new-pill">New</span>' : "";
     const badges = a.sectors.map(s => `<span class="badge">${SECTORS[s] || s}</span>`).join("");
     const sourceLabel = a.page ? `${a.source}, ${a.page}` : a.source;
-    const link = a.url
-      ? `<a class="btn-read-more" href="${escapeAttr(a.url)}" target="_blank" rel="noopener">Read →</a>`
+    const readUrl = a.resolved_url || a.url;
+    const link = readUrl
+      ? `<a class="btn-read-more" href="${escapeAttr(readUrl)}" target="_blank" rel="noopener">Read →</a>`
       : "";
     card.innerHTML = `
-      ${buildNewspaperStrip(a)}
+      ${buildFeedStrip(a)}
       ${buildCardMedia(a)}
       <div class="card-body">
         <div class="card-badges">${newPill}${badges}</div>

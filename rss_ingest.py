@@ -64,6 +64,7 @@ class Article:
     pre_classified: bool = False
     auto_summary: str = ""
     image_url: str = None
+    resolved_url: str = None
 
 
 def keyword_filter_enabled():
@@ -102,10 +103,6 @@ def _clean_html(raw):
 
 
 _IMG_SRC_RE = re.compile(r"""<img[^>]+src=['"]([^'"]+)['"]""", re.I)
-_GOOGLE_IMG_RE = re.compile(
-    r"""https://lh\d+\.googleusercontent\.com/[^"'<>\s]+""",
-    re.I,
-)
 _OG_FETCH_HEADERS = {
     **RSS_HEADERS,
     "User-Agent": (
@@ -129,6 +126,24 @@ _OG_IMAGE_PATTERNS = [
     ),
     re.compile(
         r"""<meta[^>]+content=['"]([^'"]+)['"][^>]+name=['"]twitter:image(?::src)?['"]""",
+        re.I,
+    ),
+]
+_CANONICAL_PATTERNS = [
+    re.compile(
+        r"""<link[^>]+rel=['"]canonical['"][^>]+href=['"]([^'"]+)['"]""",
+        re.I,
+    ),
+    re.compile(
+        r"""<link[^>]+href=['"]([^'"]+)['"][^>]+rel=['"]canonical['"]""",
+        re.I,
+    ),
+    re.compile(
+        r"""<meta[^>]+property=['"]og:url['"][^>]+content=['"]([^'"]+)['"]""",
+        re.I,
+    ),
+    re.compile(
+        r"""<meta[^>]+content=['"]([^'"]+)['"][^>]+property=['"]og:url['"]""",
         re.I,
     ),
 ]
@@ -157,6 +172,42 @@ def _entry_html_fields(entry):
     return fields
 
 
+def _is_google_cdn_image(url):
+    lowered = (url or "").lower()
+    blocked = (
+        "googleusercontent.com",
+        "ggpht.com",
+        "gstatic.com",
+        "google.com/images",
+        "google.co.in/images",
+        "news.google.com",
+    )
+    return any(token in lowered for token in blocked)
+
+
+def sanitize_google_news_image(image_url):
+    """Google News must use publisher og:image — never Google CDN placeholders."""
+    if not image_url or _is_bad_thumbnail(image_url):
+        return None
+    if _is_google_cdn_image(image_url):
+        return None
+    return image_url
+
+
+def _google_thumb_too_small(url):
+    """Google CDN size params like =w64-h64 or s0-w128 mean favicon-sized art."""
+    lowered = (url or "").lower()
+    if "googleusercontent.com" not in lowered and "ggpht.com" not in lowered:
+        return False
+    sizes = [int(n) for n in re.findall(r"(?:[=/-]w|s0-w)(\d+)", lowered, re.I)]
+    sizes += [int(n) for n in re.findall(r"(?:[=/-]h|s0-h)(\d+)", lowered, re.I)]
+    if sizes and max(sizes) < 200:
+        return True
+    if re.search(r"[=/-](?:w|h)\d{1,2}(?:[-_/]|$)", lowered):
+        return True
+    return False
+
+
 def _is_bad_thumbnail(url):
     lowered = (url or "").lower()
     if not lowered or lowered.startswith("data:"):
@@ -170,8 +221,24 @@ def _is_bad_thumbnail(url):
         "favicon",
         "emoji",
         "gravatar.com/avatar",
+        "placeholder",
+        "default-image",
+        "no-image",
+        "apple-touch-icon",
+        "gstatic.com/images/branding",
+        "google.com/images/branding",
+        "google.com/favicon",
+        "news.google.com/images",
+        "/logo.",
+        "/logo/",
+        "publisher-logo",
+        "site-icon",
     )
-    return any(token in lowered for token in junk)
+    if any(token in lowered for token in junk):
+        return True
+    if _google_thumb_too_small(lowered):
+        return True
+    return False
 
 
 def _pick_best_image_url(html_fragments):
@@ -184,7 +251,7 @@ def _pick_best_image_url(html_fragments):
             candidates.append(url)
 
     for url in candidates:
-        if "googleusercontent.com" in url or "ggpht.com" in url:
+        if ("googleusercontent.com" in url or "ggpht.com" in url) and not _google_thumb_too_small(url):
             return url
     for url in candidates:
         if any(token in url for token in ("/wp-content/", "/uploads/", "/images/", "cdn")):
@@ -196,10 +263,10 @@ def _og_per_feed_limit():
     return int(os.environ.get("RSS_OG_PER_FEED", "20"))
 
 
-def _fetch_og_image(url):
-    """Fetch og:image from article HTML (no Gemini). Used for Google News fallbacks."""
+def _read_html_head(url):
+    """Fetch a page and return (final_url, html_prefix)."""
     if not url:
-        return None
+        return None, ""
     try:
         resp = requests.get(
             url,
@@ -214,27 +281,92 @@ def _fetch_og_image(url):
             chunk += part
             if len(chunk) >= 98304:
                 break
-        html_text = chunk.decode("utf-8", errors="ignore")
+        return resp.url, chunk.decode("utf-8", errors="ignore")
     except Exception:
-        return None
+        return None, ""
 
+
+def _extract_canonical_url(html_text, current_url):
+    for pattern in _CANONICAL_PATTERNS:
+        match = pattern.search(html_text or "")
+        if match:
+            candidate = html.unescape(match.group(1).strip())
+            if candidate.startswith(("http://", "https://")):
+                return candidate
+    if current_url and current_url.startswith(("http://", "https://")):
+        return current_url
+    return None
+
+
+def _extract_og_image(html_text):
     for pattern in _OG_IMAGE_PATTERNS:
-        match = pattern.search(html_text)
+        match = pattern.search(html_text or "")
         if match:
             image_url = html.unescape(match.group(1).strip())
             if image_url and not _is_bad_thumbnail(image_url):
                 return image_url
-
-    google_match = _GOOGLE_IMG_RE.search(html_text)
-    if google_match:
-        image_url = google_match.group(0).rstrip("'\"")
-        if not _is_bad_thumbnail(image_url):
-            return image_url
-
     return None
 
 
-def _entry_image_url(entry, origin=None, og_budget=None):
+def _fetch_article_page_meta(source_url):
+    """Resolve redirects and extract og:image from the publisher page."""
+    final_url, html_text = _read_html_head(source_url)
+    if not final_url:
+        return None, None
+
+    resolved_url = _extract_canonical_url(html_text, final_url) or final_url
+    image_url = _extract_og_image(html_text)
+
+    if "news.google.com" in resolved_url:
+        publisher_hint = None
+        for pattern in _CANONICAL_PATTERNS:
+            match = pattern.search(html_text or "")
+            if match:
+                publisher_hint = html.unescape(match.group(1).strip())
+                if publisher_hint.startswith(("http://", "https://")):
+                    break
+                publisher_hint = None
+        if publisher_hint and "news.google.com" not in publisher_hint:
+            publisher_final, publisher_html = _read_html_head(publisher_hint)
+            if publisher_final:
+                resolved_url = (
+                    _extract_canonical_url(publisher_html, publisher_final) or publisher_final
+                )
+                image_url = _extract_og_image(publisher_html) or image_url
+
+    return resolved_url, sanitize_google_news_image(image_url)
+
+
+def _cached_google_news_meta(google_url):
+    import database
+
+    key = (google_url or "").strip().rstrip("/")
+    if not key:
+        return None, None
+    cached = database.get_link_cache(key)
+    if not cached:
+        return None, None
+    return cached.get("resolved_url"), sanitize_google_news_image(cached.get("image_url"))
+
+
+def _resolve_google_news_item(google_url):
+    """Resolve a Google News RSS link to publisher URL + og:image, with DB cache."""
+    import database
+
+    key = (google_url or "").strip().rstrip("/")
+    if not key:
+        return None, None
+
+    cached = database.get_link_cache(key)
+    if cached:
+        return cached.get("resolved_url"), cached.get("image_url")
+
+    resolved_url, image_url = _fetch_article_page_meta(key)
+    database.upsert_link_cache(key, resolved_url, image_url)
+    return resolved_url, image_url
+
+
+def _entry_image_url(entry):
     """Best-effort thumbnail from RSS/Atom entry metadata or embedded HTML."""
     media_content = entry.get("media_content") or getattr(entry, "media_content", None) or []
     for item in media_content:
@@ -262,16 +394,7 @@ def _entry_image_url(entry, origin=None, og_budget=None):
             return href
 
     image_url = _pick_best_image_url(_entry_html_fields(entry))
-    if image_url:
-        return image_url
-
-    if origin == "google_news" and og_budget is not None and og_budget[0] > 0:
-        link = entry.get("link", "")
-        if link:
-            og_budget[0] -= 1
-            return _fetch_og_image(link)
-
-    return None
+    return image_url or None
 
 
 def _make_summary(title, body, max_len=280):
@@ -337,7 +460,7 @@ def fetch_feed(source_name, feed_url, max_items=80, apply_keyword_filter=True):
 
     entries = parsed.entries[:max_items]
     raw_count = len(entries)
-    og_budget = [_og_per_feed_limit()] if origin == "google_news" else None
+    resolve_budget = [_og_per_feed_limit()] if origin == "google_news" else None
     for entry in entries:
         title = entry.get("title", "").strip()
         if not title:
@@ -347,20 +470,44 @@ def fetch_feed(source_name, feed_url, max_items=80, apply_keyword_filter=True):
         link = entry.get("link", "")
         pub_date = _entry_pub_date(entry)
 
-        article = Article(
-            source=source_name,
-            pub_date=pub_date,
-            title=title,
-            byline=entry.get("author", ""),
-            body=summary,
-            url=link,
-            image_url=_entry_image_url(entry, origin=origin, og_budget=og_budget),
-            origin=origin,
-        )
-        if apply_keyword_filter:
-            article = _prepare_article(article)
-            if article is None:
-                continue
+        if origin == "google_news":
+            article = Article(
+                source=source_name,
+                pub_date=pub_date,
+                title=title,
+                byline=entry.get("author", ""),
+                body=summary,
+                url=link,
+                origin=origin,
+            )
+            if apply_keyword_filter:
+                article = _prepare_article(article)
+                if article is None:
+                    continue
+            cached_resolved, cached_image = _cached_google_news_meta(link)
+            if cached_resolved or cached_image:
+                article.resolved_url = cached_resolved
+                article.image_url = sanitize_google_news_image(cached_image)
+            elif resolve_budget and resolve_budget[0] > 0:
+                resolve_budget[0] -= 1
+                resolved_url, image_url = _resolve_google_news_item(link)
+                article.resolved_url = resolved_url
+                article.image_url = sanitize_google_news_image(image_url)
+        else:
+            article = Article(
+                source=source_name,
+                pub_date=pub_date,
+                title=title,
+                byline=entry.get("author", ""),
+                body=summary,
+                url=link,
+                image_url=_entry_image_url(entry),
+                origin=origin,
+            )
+            if apply_keyword_filter:
+                article = _prepare_article(article)
+                if article is None:
+                    continue
         articles.append(article)
 
     return articles, raw_count

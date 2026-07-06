@@ -38,7 +38,15 @@ CREATE TABLE IF NOT EXISTS articles (
     processed INTEGER DEFAULT 0,
     image_url TEXT,
     title_key TEXT,
+    resolved_url TEXT,
     UNIQUE(origin, source, pub_date, page, article_id, url)
+);
+
+CREATE TABLE IF NOT EXISTS link_cache (
+    source_url TEXT PRIMARY KEY,
+    resolved_url TEXT,
+    image_url TEXT,
+    updated_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS meta (
@@ -74,6 +82,20 @@ def init_db():
             conn.execute("ALTER TABLE articles ADD COLUMN title_key TEXT")
         except sqlite3.OperationalError:
             pass
+        try:
+            conn.execute("ALTER TABLE articles ADD COLUMN resolved_url TEXT")
+        except sqlite3.OperationalError:
+            pass
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS link_cache (
+                source_url TEXT PRIMARY KEY,
+                resolved_url TEXT,
+                image_url TEXT,
+                updated_at TEXT
+            );
+            """
+        )
         _backfill_title_keys(conn)
         dedupe_by_url(conn)
         dedupe_by_title(conn)
@@ -184,18 +206,69 @@ def _backfill_title_keys(conn):
             )
 
 
-def _refresh_existing(conn, existing_id, fetched_at, image_url=None):
+def _sanitize_image_url(image_url):
+    if not image_url:
+        return None
+    try:
+        from rss_ingest import _is_bad_thumbnail
+
+        if _is_bad_thumbnail(image_url):
+            return None
+    except ImportError:
+        pass
+    return image_url
+
+
+def _refresh_existing(conn, existing_id, fetched_at, image_url=None, resolved_url=None):
+    image_url = _sanitize_image_url(image_url)
+    sets = ["fetched_at = ?"]
+    params = [fetched_at]
     if image_url:
+        sets.append("image_url = ?")
+        params.append(image_url)
+    if resolved_url:
+        sets.append("resolved_url = COALESCE(resolved_url, ?)")
+        params.append(resolved_url)
+    params.append(existing_id)
+    conn.execute(
+        f"UPDATE articles SET {', '.join(sets)} WHERE id = ?",
+        params,
+    )
+
+
+def get_link_cache(source_url):
+    """Return cached redirect/image data for a Google News (or other) feed URL."""
+    key = _normalize_url(source_url)
+    if not key:
+        return None
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT resolved_url, image_url FROM link_cache WHERE source_url = ?",
+            (key,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_link_cache(source_url, resolved_url=None, image_url=None):
+    """Persist resolved publisher URL and og:image for a feed link."""
+    key = _normalize_url(source_url)
+    if not key:
+        return
+    try:
+        from rss_ingest import sanitize_google_news_image
+
+        image_url = sanitize_google_news_image(image_url)
+    except ImportError:
+        image_url = _sanitize_image_url(image_url)
+    with get_conn() as conn:
         conn.execute(
-            """UPDATE articles
-               SET fetched_at = ?, image_url = COALESCE(image_url, ?)
-               WHERE id = ?""",
-            (fetched_at, image_url, existing_id),
-        )
-    else:
-        conn.execute(
-            "UPDATE articles SET fetched_at = ? WHERE id = ?",
-            (fetched_at, existing_id),
+            """INSERT INTO link_cache (source_url, resolved_url, image_url, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(source_url) DO UPDATE SET
+                 resolved_url = COALESCE(excluded.resolved_url, link_cache.resolved_url),
+                 image_url = COALESCE(excluded.image_url, link_cache.image_url),
+                 updated_at = excluded.updated_at""",
+            (key, resolved_url, image_url, _now_iso()),
         )
 
 
@@ -281,7 +354,8 @@ def insert_articles(articles):
             url = _normalize_url(getattr(a, "url", None))
             page = getattr(a, "page", None)
             article_id = getattr(a, "article_id", None)
-            image_url = getattr(a, "image_url", None) or None
+            image_url = _sanitize_image_url(getattr(a, "image_url", None) or None)
+            resolved_url = _normalize_url(getattr(a, "resolved_url", None))
             title_key = _normalize_title_key(a.title)
             pre_classified = getattr(a, "pre_classified", False)
 
@@ -293,7 +367,9 @@ def insert_articles(articles):
                     (url,),
                 ).fetchone()
                 if existing:
-                    _refresh_existing(conn, existing["id"], fetched_at, image_url)
+                    _refresh_existing(
+                        conn, existing["id"], fetched_at, image_url, resolved_url
+                    )
                     refreshed_ids.append(existing["id"])
                     continue
 
@@ -305,7 +381,9 @@ def insert_articles(articles):
                     (title_key,),
                 ).fetchone()
                 if existing:
-                    _refresh_existing(conn, existing["id"], fetched_at, image_url)
+                    _refresh_existing(
+                        conn, existing["id"], fetched_at, image_url, resolved_url
+                    )
                     refreshed_ids.append(existing["id"])
                     continue
 
@@ -316,19 +394,20 @@ def insert_articles(articles):
                     cur = conn.execute(
                         """INSERT INTO articles
                            (origin, source, pub_date, page, article_id, url, title, subtitle, byline, body,
-                            relevant, sectors, summary, processed, fetched_at, image_url, title_key)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 1, ?, ?, ?)""",
+                            relevant, sectors, summary, processed, fetched_at, image_url, resolved_url, title_key)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 1, ?, ?, ?, ?)""",
                         (origin, a.source, a.pub_date, page, article_id, url,
                          a.title, a.subtitle, a.byline, a.body,
-                         json.dumps(sectors), summary, fetched_at, image_url, title_key),
+                         json.dumps(sectors), summary, fetched_at, image_url, resolved_url, title_key),
                     )
                 else:
                     cur = conn.execute(
                         """INSERT INTO articles
-                           (origin, source, pub_date, page, article_id, url, title, subtitle, byline, body, fetched_at, image_url, title_key)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           (origin, source, pub_date, page, article_id, url, title, subtitle, byline, body,
+                            fetched_at, image_url, resolved_url, title_key)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (origin, a.source, a.pub_date, page, article_id, url,
-                         a.title, a.subtitle, a.byline, a.body, fetched_at, image_url, title_key),
+                         a.title, a.subtitle, a.byline, a.body, fetched_at, image_url, resolved_url, title_key),
                     )
                 inserted += 1
                 inserted_ids.append(cur.lastrowid)
@@ -341,7 +420,9 @@ def insert_articles(articles):
                         (url,),
                     ).fetchone()
                     if existing:
-                        _refresh_existing(conn, existing["id"], fetched_at, image_url)
+                        _refresh_existing(
+                            conn, existing["id"], fetched_at, image_url, resolved_url
+                        )
                         refreshed_ids.append(existing["id"])
                         continue
                 if title_key:
@@ -352,7 +433,9 @@ def insert_articles(articles):
                         (title_key,),
                     ).fetchone()
                     if existing:
-                        _refresh_existing(conn, existing["id"], fetched_at, image_url)
+                        _refresh_existing(
+                            conn, existing["id"], fetched_at, image_url, resolved_url
+                        )
                         refreshed_ids.append(existing["id"])
     persist()
     return inserted, inserted_ids, refreshed_ids

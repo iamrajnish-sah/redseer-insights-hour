@@ -53,6 +53,12 @@ def on_startup():
 def _row_to_dict(row):
     d = dict(row)
     d["sectors"] = normalize_sector_tags(json.loads(d["sectors"] or "[]"))
+    source = d.get("source") or ""
+    origin = d.get("origin") or ""
+    if origin == "google_news" or source.startswith("Google News"):
+        from rss_ingest import sanitize_google_news_image
+
+        d["image_url"] = sanitize_google_news_image(d.get("image_url"))
     return d
 
 

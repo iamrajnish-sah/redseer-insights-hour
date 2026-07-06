@@ -60,7 +60,7 @@ def build_digest_html(sector_label, pub_date, articles):
     items = []
     for row in articles:
         a = _article_dict(row)
-        link = a.get("url") or ""
+        link = a.get("resolved_url") or a.get("url") or ""
         title = a.get("title") or "Untitled"
         summary = a.get("summary") or ""
         source = a.get("source") or ""
