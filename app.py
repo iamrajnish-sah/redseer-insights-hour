@@ -138,12 +138,25 @@ def admin_storage_status(_: None = Depends(admin_auth.require_admin)):
     status = storage_status(database.DB_PATH)
     status["relevant_articles"] = database.get_relevant_count()
     status["total_articles"] = database.get_stats()["total"]
-    status["hint"] = (
-        "Blob linked — news is saved to cloud storage after each upload/refresh."
-        if status["blob_configured"]
-        else "Add Vercel Blob store to this project so news survives overnight."
-    )
+    if status["blob_configured"] and status["last_save_ok"]:
+        status["hint"] = "Blob save succeeded — your news is stored in the cloud."
+    elif status["blob_configured"] and status["last_save_error"]:
+        status["hint"] = f"Blob linked but last save failed: {status['last_save_error']}"
+    elif status["blob_configured"]:
+        status["hint"] = "Blob linked — refresh RSS or process Gemini once to save data."
+    else:
+        status["hint"] = "Missing BLOB_READ_WRITE_TOKEN — connect Blob store to this project."
     return status
+
+
+@app.post("/api/admin/persist-db")
+def admin_persist_db(_: None = Depends(admin_auth.require_admin)):
+    """Force-save the database to Vercel Blob (for testing persistence)."""
+    ok = save_db(database.DB_PATH)
+    status = storage_status(database.DB_PATH)
+    if not ok:
+        raise HTTPException(400, status.get("last_save_error") or "Blob save failed")
+    return {"ok": True, **status, "message": "Database saved to Vercel Blob."}
 
 
 @app.get("/api/admin/status")
