@@ -34,7 +34,7 @@ import dedupe
 import email_digest
 import admin_auth
 import auto_refresh
-from db_persist import restore_db, save_db
+from db_persist import restore_db, save_db, storage_status
 
 from sector_keywords import SECTOR_LABELS, GNEWS_QUERIES, normalize_sector_tags
 
@@ -132,6 +132,20 @@ def cron_refresh(authorization: str = Header(default=None, alias="Authorization"
         raise HTTPException(500, f"Cron refresh failed: {exc}") from exc
 
 
+@app.get("/api/admin/storage-status")
+def admin_storage_status(_: None = Depends(admin_auth.require_admin)):
+    """Check whether Vercel Blob persistence is configured and working."""
+    status = storage_status(database.DB_PATH)
+    status["relevant_articles"] = database.get_relevant_count()
+    status["total_articles"] = database.get_stats()["total"]
+    status["hint"] = (
+        "Blob linked — news is saved to cloud storage after each upload/refresh."
+        if status["blob_configured"]
+        else "Add Vercel Blob store to this project so news survives overnight."
+    )
+    return status
+
+
 @app.get("/api/admin/status")
 def admin_status():
     return {"protected": admin_auth.admin_password_configured()}
@@ -173,6 +187,7 @@ async def upload_newspaper(
 
     inserted, new_ids, refreshed_ids = database.insert_articles(articles)
     merged = dedupe.run_all_dedupes()["total_merged"]
+    database.persist()
 
     method_labels = {
         "epub_structure": "structured epub pages",
@@ -400,6 +415,7 @@ def process_unprocessed(_: None = Depends(admin_auth.require_admin)):
 def dedupe_all(_: None = Depends(admin_auth.require_admin)):
     """Remove duplicate stories already stored (same URL or same headline)."""
     result = dedupe.run_all_dedupes()
+    database.persist()
     return {
         **result,
         "message": f"Removed {result['total_merged']} duplicate(s).",
@@ -433,6 +449,7 @@ def send_email_digest(pub_date: str = None, _: None = Depends(admin_auth.require
 def reconcile_ride_hailing(_: None = Depends(admin_auth.require_admin)):
     """Remove wrongly tagged ride-hailing articles and add newly matching ones."""
     result = database.reconcile_ride_hailing_tags()
+    database.persist()
     return {
         **result,
         "message": (

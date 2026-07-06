@@ -41,9 +41,16 @@ Copy `.env.example` to `.env`. Important variables:
    - `SECTOR_RECIPIENTS_JSON` — copy content from `sector_recipients.example.json` as one line
 4. Deploy.
 
-### Vercel notes
+### Vercel notes — keep your data (important)
 
-- The app uses **SQLite**. On Vercel, data is stored in `/tmp` and may **reset between deployments or cold starts**. For production persistence, plan to move to a hosted database later.
+1. **Storage → Blob** → create a store (e.g. `redseer-insights-hour-blob`) and **connect it to this project**.
+2. Vercel adds **`BLOB_READ_WRITE_TOKEN`** automatically — redeploy after linking.
+3. The app saves the full SQLite database to Blob after every upload, refresh, and Gemini process.
+4. **Mint/newspaper uploads** and **Gemini-processed articles** are stored permanently — you will not need to re-upload or re-run Gemini after a cold start.
+5. In Backend Management, open `/api/admin/storage-status` (or check Blob dashboard) — after the first save you should see blob size **> 0 B**.
+
+Without Blob, `/tmp` on Vercel is wiped overnight and all news disappears.
+
 - Backend Management asks for `ADMIN_PASSWORD` when opening the panel.
 - Public visitors only see the news dashboard; admin API routes reject requests without the password header.
 

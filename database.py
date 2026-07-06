@@ -354,7 +354,19 @@ def insert_articles(articles):
                     if existing:
                         _refresh_existing(conn, existing["id"], fetched_at, image_url)
                         refreshed_ids.append(existing["id"])
+    persist()
     return inserted, inserted_ids, refreshed_ids
+
+
+def persist():
+    """Save SQLite to Vercel Blob after writes (no-op locally without token)."""
+    try:
+        from db_persist import save_db
+
+        return save_db(DB_PATH)
+    except Exception as exc:
+        print(f"  [warning] database persist failed: {exc}")
+        return False
 
 
 def get_unprocessed(limit=None, max_days=None, origins=None):
