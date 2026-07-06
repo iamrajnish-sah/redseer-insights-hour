@@ -252,9 +252,20 @@ GNEWS_QUERIES = {
     "mobile_electronics": "smartphone India OR Samsung India OR Apple India",
 }
 
-# Google News RSS + NewsAPI top-headlines (short queries work best)
-GOOGLE_NEWS_QUERIES = dict(GNEWS_QUERIES)
+# Google News RSS — India-focused queries (not the same as GNews.io)
+GOOGLE_NEWS_QUERIES = {
+    k: f"({v}) India when:7d"
+    for k, v in GNEWS_QUERIES.items()
+}
 NEWSAPI_HEADLINE_QUERIES = dict(GNEWS_QUERIES)
+
+INDIA_NEWS_MARKERS = (
+    "india", "indian", "delhi", "mumbai", "bengaluru", "bangalore", "chennai",
+    "hyderabad", "kolkata", "pune", "gurugram", "gurgaon", "noida", "ncr",
+    "flipkart", "zomato", "swiggy", "blinkit", "zepto", "myntra", "meesho",
+    "ola ", "rapido", "paytm", "upi ", "rupee", "sebi", "rbi ", "gst ",
+    ".in/", "livemint", "economictimes", "business-standard",
+)
 
 
 def normalize_sector_tags(sectors):
@@ -358,3 +369,13 @@ def make_summary(title, body, max_len=280):
     if len(text) <= max_len:
         return text
     return text[: max_len - 3].rstrip() + "..."
+
+
+def is_india_relevant(title, body="", url="", resolved_url=""):
+    """Extra guard for Google News RSS — drop obvious non-India stories."""
+    haystack = _normalize(f"{title} {body} {url} {resolved_url}")
+    if not haystack:
+        return False
+    if "india" in haystack or ".in/" in haystack:
+        return True
+    return any(marker in haystack for marker in INDIA_NEWS_MARKERS)

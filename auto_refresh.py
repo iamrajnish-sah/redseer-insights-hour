@@ -60,7 +60,11 @@ def refresh_status():
 
 
 def _persist():
-    save_db(database.DB_PATH)
+    from db_persist import save_db, enabled
+
+    if not enabled():
+        return False
+    return save_db(database.DB_PATH)
 
 
 def run_refresh(include_rss=True, include_gnews=True, include_newsapi=None):

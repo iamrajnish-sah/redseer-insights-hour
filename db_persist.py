@@ -176,10 +176,22 @@ def storage_status(local_path):
     }
 
 
-def restore_db(local_path):
+def _blob_remote_size(blob_url):
+    if not blob_url or not enabled():
+        return 0
+    try:
+        resp = requests.head(blob_url, headers=_headers(), timeout=20, allow_redirects=True)
+        if resp.status_code == 404:
+            return 0
+        return int(resp.headers.get("content-length") or 0)
+    except Exception:
+        return 0
+
+
+def restore_db(local_path, force=False):
     global _CACHED_BLOB_URL
     if not enabled():
-        print("  [info] Blob not configured — set BLOB_STORE_ID and redeploy on Vercel")
+        print("  [info] Blob not configured — set BLOB_STORE_ID and BLOB_READ_WRITE_TOKEN on Vercel")
         return False
 
     blob_url = _list_blob_url()
@@ -187,11 +199,31 @@ def restore_db(local_path):
         print("  [info] no database blob found yet — starting fresh")
         return False
 
+    local_size = os.path.getsize(local_path) if os.path.isfile(local_path) else 0
+    remote_size = _blob_remote_size(blob_url)
+
+    if local_size > 100_000 and not force and remote_size <= local_size:
+        print(f"  [info] keeping local database ({local_size:,} bytes)")
+        return False
+
+    if local_size > 8_192 and remote_size > local_size * 1.5:
+        print(
+            f"  [info] cloud backup ({remote_size:,} B) is larger than local ({local_size:,} B) — restoring"
+        )
+        force = True
+
+    if local_size > 8_192 and not force:
+        print(f"  [info] local database exists ({local_size:,} bytes) — skip restore (use force to overwrite)")
+        return False
+
     try:
         resp = requests.get(blob_url, headers=_headers(), timeout=60)
         if resp.status_code == 404:
             return False
         resp.raise_for_status()
+        if len(resp.content) < 512 and not force:
+            print("  [info] cloud blob too small — skip restore")
+            return False
         directory = os.path.dirname(local_path)
         if directory:
             os.makedirs(directory, exist_ok=True)
@@ -205,17 +237,28 @@ def restore_db(local_path):
         return False
 
 
-def save_db(local_path):
+def save_db(local_path, force=False):
     global _CACHED_BLOB_URL, _LAST_SAVE_ERROR, _LAST_SAVE_OK
     _LAST_SAVE_ERROR = None
     _LAST_SAVE_OK = False
 
     if not enabled():
-        _LAST_SAVE_ERROR = "Blob not configured — need BLOB_STORE_ID + OIDC or BLOB_READ_WRITE_TOKEN"
+        _LAST_SAVE_ERROR = "Blob not configured — add BLOB_STORE_ID + BLOB_READ_WRITE_TOKEN on Vercel, then redeploy"
         return False
     if not os.path.isfile(local_path):
         _LAST_SAVE_ERROR = "local database file missing"
         return False
+
+    local_size = os.path.getsize(local_path)
+    blob_url = _list_blob_url()
+    if blob_url and not force:
+        remote_size = _blob_remote_size(blob_url)
+        if remote_size > 50_000 and local_size < 10_000:
+            _LAST_SAVE_ERROR = (
+                f"Refused to overwrite cloud backup ({remote_size:,} bytes) with tiny local DB "
+                f"({local_size:,} bytes). Click Restore from Cloud first."
+            )
+            return False
 
     _checkpoint_sqlite(local_path)
 

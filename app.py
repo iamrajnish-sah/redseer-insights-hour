@@ -34,7 +34,7 @@ import dedupe
 import email_digest
 import admin_auth
 import auto_refresh
-from db_persist import restore_db, save_db, storage_status
+from db_persist import restore_db, save_db, storage_status, enabled
 
 from sector_keywords import SECTOR_LABELS, GNEWS_QUERIES, normalize_sector_tags
 
@@ -48,6 +48,8 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 def on_startup():
     restore_db(database.DB_PATH)
     database.init_db()
+    # If server restarted with an empty /tmp DB but cloud backup exists, restore it.
+    restore_db(database.DB_PATH)
 
 
 def _row_to_dict(row):
@@ -154,14 +156,43 @@ def admin_storage_status(_: None = Depends(admin_auth.require_admin)):
     elif status["blob_configured"]:
         status["hint"] = "Blob linked — refresh RSS or process Gemini once to save data."
     else:
-        status["hint"] = "Missing BLOB_READ_WRITE_TOKEN — connect Blob store to this project."
+        status["hint"] = (
+            "Missing Blob on this Vercel project — add BLOB_STORE_ID + BLOB_READ_WRITE_TOKEN "
+            "(Storage → your Blob store → Connect to Project), then redeploy."
+        )
     return status
 
 
+@app.post("/api/admin/restore-db")
+def admin_restore_db(_: None = Depends(admin_auth.require_admin)):
+    """Restore SQLite from Vercel Blob (recovers newspaper uploads after cold start)."""
+    if not enabled():
+        raise HTTPException(
+            400,
+            "Blob not configured on this Vercel project — in Vercel go to Storage → "
+            "your Blob store → Connect to Project, then add BLOB_STORE_ID + BLOB_READ_WRITE_TOKEN and redeploy.",
+        )
+    ok = restore_db(database.DB_PATH, force=True)
+    database.init_db()
+    status = storage_status(database.DB_PATH)
+    if not ok and not status.get("local_db_bytes", 0):
+        raise HTTPException(
+            400,
+            status.get("last_save_error")
+            or "Could not restore — check BLOB_STORE_ID and BLOB_READ_WRITE_TOKEN on Vercel",
+        )
+    return {
+        "ok": ok,
+        **status,
+        "message": "Database restored from Vercel Blob." if ok else "Restore skipped or blob empty.",
+        "relevant_articles": database.get_relevant_count(),
+    }
+
+
 @app.post("/api/admin/persist-db")
-def admin_persist_db(_: None = Depends(admin_auth.require_admin)):
+def admin_persist_db(force: bool = False, _: None = Depends(admin_auth.require_admin)):
     """Force-save the database to Vercel Blob (for testing persistence)."""
-    ok = save_db(database.DB_PATH)
+    ok = save_db(database.DB_PATH, force=force)
     status = storage_status(database.DB_PATH)
     if not ok:
         raise HTTPException(400, status.get("last_save_error") or "Blob save failed")

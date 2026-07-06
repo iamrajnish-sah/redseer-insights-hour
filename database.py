@@ -444,8 +444,10 @@ def insert_articles(articles):
 def persist():
     """Save SQLite to Vercel Blob after writes (no-op locally without token)."""
     try:
-        from db_persist import save_db
+        from db_persist import save_db, enabled
 
+        if not enabled():
+            return False
         return save_db(DB_PATH)
     except Exception as exc:
         print(f"  [warning] database persist failed: {exc}")

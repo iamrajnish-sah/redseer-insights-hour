@@ -19,7 +19,7 @@ from datetime import datetime, date, timezone
 from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
 
-from sector_keywords import match_sectors, make_summary, GOOGLE_NEWS_QUERIES
+from sector_keywords import match_sectors, make_summary, GOOGLE_NEWS_QUERIES, is_india_relevant
 
 RSS_USER_AGENT = (
     "RedseerInsightHour/1.0 "
@@ -72,8 +72,18 @@ def keyword_filter_enabled():
 
 
 def _max_items_per_feed():
-    """How many recent headlines to scan per feed (not a total cap). Default 80."""
+    """How many recent headlines to scan per Indian publisher RSS feed. Default 80."""
     return int(os.environ.get("RSS_MAX_ITEMS", "80"))
+
+
+def _google_news_max_items():
+    """Google News feeds are capped lower so publisher RSS dominates. Default 18."""
+    return int(os.environ.get("GOOGLE_NEWS_MAX_ITEMS", "18"))
+
+
+def _google_news_article_cap():
+    """Max Google News articles kept per full refresh. Default 35."""
+    return int(os.environ.get("GOOGLE_NEWS_ARTICLE_CAP", "35"))
 
 
 def _google_news_url(query):
@@ -484,6 +494,13 @@ def fetch_feed(source_name, feed_url, max_items=80, apply_keyword_filter=True):
                 article = _prepare_article(article)
                 if article is None:
                     continue
+            if not is_india_relevant(
+                article.title,
+                article.body,
+                article.url,
+                getattr(article, "resolved_url", None),
+            ):
+                continue
             cached_resolved, cached_image = _cached_google_news_meta(link)
             if cached_resolved or cached_image:
                 article.resolved_url = cached_resolved
@@ -528,25 +545,32 @@ def _fetch_feed_with_retry(source_name, feed_url, max_items, apply_filter):
 def fetch_all(feeds=None, max_items_per_feed=None):
     feeds = feeds or all_feeds()
     apply_filter = keyword_filter_enabled()
-    max_items = max_items_per_feed or _max_items_per_feed()
+    publisher_max = max_items_per_feed or _max_items_per_feed()
+    google_max = _google_news_max_items()
     all_articles = []
     raw_total = 0
     errors = []
     feed_stats = []
     feeds_ok = 0
+    google_count = 0
+    google_cap = _google_news_article_cap()
 
     with ThreadPoolExecutor(max_workers=_max_workers()) as pool:
-        futures = {
-            pool.submit(
-                _fetch_feed_with_retry, name, url, max_items, apply_filter
-            ): name
-            for name, url in feeds
-        }
+        futures = {}
+        for name, url in feeds:
+            per_feed = google_max if name.startswith("Google News") else publisher_max
+            futures[pool.submit(
+                _fetch_feed_with_retry, name, url, per_feed, apply_filter
+            )] = name
         for future in as_completed(futures):
             name = futures[future]
             try:
                 items, raw_count = future.result()
                 raw_total += raw_count
+                if name.startswith("Google News"):
+                    remaining = max(0, google_cap - google_count)
+                    items = items[:remaining]
+                    google_count += len(items)
                 all_articles.extend(items)
                 feeds_ok += 1
                 feed_stats.append(
@@ -568,7 +592,9 @@ def fetch_all(feeds=None, max_items_per_feed=None):
         "feeds_total": len(feeds),
         "feeds_ok": feeds_ok,
         "feeds_failed": len(errors),
-        "max_items_per_feed": max_items,
+        "max_items_per_feed": publisher_max,
+        "google_news_max_items": google_max,
+        "google_news_cap": google_cap,
         "errors": errors,
         "feed_stats": feed_stats,
     }
