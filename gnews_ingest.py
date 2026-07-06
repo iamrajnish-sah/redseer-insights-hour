@@ -45,7 +45,7 @@ def _normalize_url(url):
 
 
 def _max_results():
-    default = "8" if os.environ.get("VERCEL") else "10"
+    default = "10" if os.environ.get("VERCEL") else "10"
     return int(os.environ.get("GNEWS_MAX_RESULTS", default))
 
 

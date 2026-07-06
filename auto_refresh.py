@@ -66,7 +66,7 @@ def _persist():
 def run_refresh(include_rss=True, include_gnews=True, include_newsapi=None):
     """Pull RSS + GNews (+ NewsAPI when configured) and dedupe."""
     if include_newsapi is None:
-        include_newsapi = bool(os.environ.get("NEWSAPIKEY"))
+        include_newsapi = bool(os.environ.get("NEWSAPIKEY") or os.environ.get("NEWSAPI_KEY"))
 
     summary = {
         "rss": None,
@@ -91,7 +91,7 @@ def run_refresh(include_rss=True, include_gnews=True, include_newsapi=None):
         summary["total_inserted"] += inserted
         summary["total_refreshed"] += len(refreshed)
 
-    if include_newsapi and os.environ.get("NEWSAPIKEY"):
+    if include_newsapi and (os.environ.get("NEWSAPIKEY") or os.environ.get("NEWSAPI_KEY")):
         articles, stats = newsapi_ingest.fetch_all()
         inserted, _, refreshed = database.insert_articles(articles)
         summary["newsapi"] = {"inserted": inserted, "refreshed": len(refreshed), **stats}

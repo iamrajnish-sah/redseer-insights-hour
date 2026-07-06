@@ -100,8 +100,8 @@ def email_status(_: None = Depends(admin_auth.require_admin)):
 
 
 @app.get("/api/articles")
-def get_articles(sector: str = None, pub_date: str = None, search: str = None):
-    rows = database.get_relevant_articles(pub_date=pub_date, sector=sector, search=search)
+def get_articles(sector: str = None, pub_date: str = None, search: str = None, days: int = None):
+    rows = database.get_relevant_articles(pub_date=pub_date, sector=sector, search=search, days=days)
     articles = [_row_to_dict(r) for r in rows]
     return articles
 
@@ -275,25 +275,55 @@ def refresh_rss(_: None = Depends(admin_auth.require_admin)):
 
 @app.post("/api/refresh-newsapi")
 def refresh_newsapi(_: None = Depends(admin_auth.require_admin)):
-    if not os.environ.get("NEWSAPIKEY"):
+    api_key = os.environ.get("NEWSAPIKEY") or os.environ.get("NEWSAPI_KEY")
+    if not api_key:
         raise HTTPException(400, "NEWSAPIKEY is not set on the server")
-    articles, stats = newsapi_ingest.fetch_all()
-    inserted, new_ids, refreshed_ids = database.insert_articles(articles)
-    dedupe_stats = dedupe.run_all_dedupes()
-    merged = dedupe_stats["total_merged"]
-    save_db(database.DB_PATH)
-    return {
-        "fetched": stats["fetched"],
-        "matched": stats["matched"],
-        "skipped": stats["skipped"],
-        "inserted": inserted,
-        "refreshed": len(refreshed_ids),
-        "merged_duplicates": merged,
-        "new_ids": new_ids,
-        "refreshed_ids": refreshed_ids,
-        "highlight_ids": new_ids + refreshed_ids,
-        "message": "NewsAPI items pre-tagged by sector — no Gemini needed.",
-    }
+    try:
+        articles, stats = newsapi_ingest.fetch_all()
+        inserted, new_ids, refreshed_ids = database.insert_articles(articles)
+        dedupe_stats = dedupe.run_all_dedupes()
+        merged = dedupe_stats["total_merged"]
+        errors = stats.get("errors") or []
+        endpoint = stats.get("endpoint", "top-headlines")
+        msg = (
+            f"NewsAPI ({endpoint}) saved {inserted} new, {len(refreshed_ids)} updated "
+            f"({stats.get('raw_from_api', 0)} raw from API)."
+        )
+        if not articles and errors:
+            msg = f"NewsAPI returned no articles. {'; '.join(errors[:2])}"
+        elif errors:
+            msg += f" {len(errors)} sector query had errors."
+        save_db(database.DB_PATH)
+        return {
+            "fetched": stats["fetched"],
+            "raw_from_api": stats.get("raw_from_api", stats["fetched"]),
+            "matched": stats["matched"],
+            "skipped": stats["skipped"],
+            "inserted": inserted,
+            "refreshed": len(refreshed_ids),
+            "merged_duplicates": merged,
+            "new_ids": new_ids,
+            "refreshed_ids": refreshed_ids,
+            "highlight_ids": new_ids + refreshed_ids,
+            "errors": errors,
+            "endpoint": endpoint,
+            "message": msg,
+        }
+    except Exception as exc:
+        raise HTTPException(500, f"NewsAPI refresh failed: {exc}") from exc
+
+
+@app.post("/api/refresh-all")
+def refresh_all_sources(_: None = Depends(admin_auth.require_admin)):
+    """Refresh RSS + Google News RSS + GNews + NewsAPI in one go."""
+    try:
+        summary = auto_refresh.run_refresh(include_rss=True, include_gnews=True, include_newsapi=True)
+        inserted = summary.get("total_inserted", 0)
+        refreshed = summary.get("total_refreshed", 0)
+        msg = f"All sources refreshed — {inserted} new, {refreshed} updated."
+        return {"ok": True, "message": msg, **summary}
+    except Exception as exc:
+        raise HTTPException(500, f"Refresh all failed: {exc}") from exc
 
 
 @app.post("/api/refresh-gnews")

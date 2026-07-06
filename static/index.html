@@ -517,6 +517,7 @@
       <button class="btn btn-ghost" id="btnRss" onclick="refreshRss()">↻ Refresh RSS</button>
       <button class="btn btn-ghost" id="btnNewsApi" onclick="refreshNewsApi()">↻ Refresh NewsAPI</button>
       <button class="btn btn-ghost" id="btnGNews" onclick="refreshGNews()">↻ Refresh GNews</button>
+      <button class="btn btn-primary" id="btnRefreshAll" onclick="refreshAllSources()">↻ Refresh All Sources</button>
       <button class="btn btn-teal" id="btnGemini" onclick="processArticles()">✦ Process with Gemini</button>
       <button class="btn btn-email" id="btnEmail" onclick="sendSectorEmails()">✉ Send Email</button>
       <button class="btn btn-ghost btn-sm" id="btnRefilterRh" onclick="refilterRideHailing()">↺ Refilter ride hailing</button>
@@ -525,8 +526,10 @@
     </div>
     <div class="panel-row">
       <span class="field-label">News date</span>
-      <input type="date" class="search-input" id="dateFilter" onchange="loadArticles()">
-      <button class="btn btn-ghost btn-sm" onclick="clearDateFilter()">Show all dates</button>
+      <button class="btn btn-ghost btn-sm" id="btnToday" onclick="filterToday()">Today</button>
+      <button class="btn btn-ghost btn-sm" id="btnRecent" onclick="filterRecent(7)">Last 7 days</button>
+      <button class="btn btn-ghost btn-sm" onclick="clearDateFilter()">All dates</button>
+      <input type="date" class="search-input" id="dateFilter" onchange="onDatePicked()">
       <span class="field-label" style="margin-left:8px;" id="emailHint"></span>
     </div>
   </section>
@@ -566,6 +569,7 @@ let adminPassword = sessionStorage.getItem("adminPassword") || "";
 let SECTORS = {};
 let currentSector = "";
 let articlesCache = [];
+let daysFilter = 7;
 const NEW_HIGHLIGHT_MS = 5 * 60 * 1000;
 let newUntil = {};
 let highlightTimer = null;
@@ -665,7 +669,25 @@ function initDatePicker() {
   el.max = new Date().toISOString().slice(0, 10);
 }
 
+function onDatePicked() {
+  daysFilter = null;
+  loadArticles();
+}
+
+function filterToday() {
+  daysFilter = null;
+  document.getElementById("dateFilter").value = new Date().toISOString().slice(0, 10);
+  loadArticles();
+}
+
+function filterRecent(days) {
+  daysFilter = days;
+  document.getElementById("dateFilter").value = "";
+  loadArticles();
+}
+
 function clearDateFilter() {
+  daysFilter = null;
   document.getElementById("dateFilter").value = "";
   loadArticles();
 }
@@ -819,6 +841,7 @@ async function loadArticles() {
   const search = document.getElementById("searchBox").value.trim();
   const params = new URLSearchParams();
   if (pubDate) params.set("pub_date", pubDate);
+  else if (daysFilter) params.set("days", String(daysFilter));
   if (search) params.set("search", search);
   const qs = params.toString();
   const url = API + "/api/articles" + (qs ? `?${qs}` : "");
@@ -1035,16 +1058,29 @@ async function refreshRss() {
 
 async function refreshNewsApi() {
   setBtnLoading("btnNewsApi", true);
-  setStatus("Fetching NewsAPI ...");
+  setStatus("Fetching NewsAPI India headlines ...");
   try {
     const resp = await adminFetch(API + "/api/refresh-newsapi", { method: "POST" });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.detail || "NewsAPI refresh failed");
-    setStatus(`${data.inserted} new NewsAPI items saved — no Gemini needed.`);
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || data.message || "NewsAPI refresh failed");
+    setStatus(data.message || `${data.inserted} new NewsAPI items saved.`);
     markNewArticles(data.highlight_ids || data.new_ids || []);
     await loadArticles(); await loadStats();
   } catch (e) { setStatus(e.message, true); }
   finally { setBtnLoading("btnNewsApi", false); }
+}
+
+async function refreshAllSources() {
+  setBtnLoading("btnRefreshAll", true);
+  setStatus("Refreshing RSS, Google News, GNews, and NewsAPI — may take 1–2 minutes ...");
+  try {
+    const resp = await adminFetch(API + "/api/refresh-all", { method: "POST" });
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || data.message || "Refresh all failed");
+    setStatus(data.message || "All news sources refreshed.");
+    await loadArticles(); await loadStats(); await loadStorageStatus();
+  } catch (e) { setStatus(e.message, true); }
+  finally { setBtnLoading("btnRefreshAll", false); }
 }
 
 async function refreshGNews() {

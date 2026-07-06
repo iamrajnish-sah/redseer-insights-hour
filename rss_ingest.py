@@ -10,6 +10,7 @@ Set RSS_KEYWORD_FILTER=false to store every RSS item (old behaviour).
 
 import os
 import re
+import urllib.parse
 import feedparser
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,7 +18,7 @@ from datetime import datetime, date, timezone
 from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
 
-from sector_keywords import match_sectors, make_summary
+from sector_keywords import match_sectors, make_summary, GOOGLE_NEWS_QUERIES
 
 RSS_USER_AGENT = (
     "RedseerInsightHour/1.0 "
@@ -69,8 +70,22 @@ def keyword_filter_enabled():
 
 
 def _max_items_per_feed():
-    """How many recent headlines to scan per feed (not a total cap). Default 50."""
-    return int(os.environ.get("RSS_MAX_ITEMS", "50"))
+    """How many recent headlines to scan per feed (not a total cap). Default 80."""
+    return int(os.environ.get("RSS_MAX_ITEMS", "80"))
+
+
+def _google_news_url(query):
+    encoded = urllib.parse.quote(query)
+    return f"https://news.google.com/rss/search?q={encoded}&hl=en-IN&gl=IN&ceid=IN:en"
+
+
+def all_feeds(include_google_news=True):
+    """Indian publisher RSS + optional Google News RSS per sector."""
+    feeds = list(FEEDS)
+    if include_google_news and os.environ.get("GOOGLE_NEWS_RSS", "true").lower() not in ("0", "false", "no"):
+        for label, query in GOOGLE_NEWS_QUERIES.items():
+            feeds.append((f"Google News — {label}", _google_news_url(query)))
+    return feeds
 
 
 def _max_workers():
@@ -162,8 +177,9 @@ def _download_feed(feed_url):
     return resp.content
 
 
-def fetch_feed(source_name, feed_url, max_items=50, apply_keyword_filter=True):
+def fetch_feed(source_name, feed_url, max_items=80, apply_keyword_filter=True):
     articles = []
+    origin = "google_news" if source_name.startswith("Google News") else "rss"
     raw_count = 0
 
     try:
@@ -196,6 +212,7 @@ def fetch_feed(source_name, feed_url, max_items=50, apply_keyword_filter=True):
             body=summary,
             url=link,
             image_url=_entry_image_url(entry),
+            origin=origin,
         )
         if apply_keyword_filter:
             article = _prepare_article(article)
@@ -219,7 +236,7 @@ def _fetch_feed_with_retry(source_name, feed_url, max_items, apply_filter):
 
 
 def fetch_all(feeds=None, max_items_per_feed=None):
-    feeds = feeds or FEEDS
+    feeds = feeds or all_feeds()
     apply_filter = keyword_filter_enabled()
     max_items = max_items_per_feed or _max_items_per_feed()
     all_articles = []

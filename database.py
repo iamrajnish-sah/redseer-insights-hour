@@ -439,12 +439,15 @@ def get_stats():
     return {"total": total, "unprocessed": unprocessed, "relevant": relevant}
 
 
-def get_relevant_articles(pub_date=None, sector=None, search=None):
+def get_relevant_articles(pub_date=None, sector=None, search=None, days=None):
     query = "SELECT * FROM articles WHERE relevant=1 AND duplicate_of IS NULL"
     params = []
     if pub_date:
         query += " AND pub_date=?"
         params.append(pub_date)
+    elif days:
+        query += " AND pub_date >= date('now', ?)"
+        params.append(f"-{int(days)} days")
     if sector:
         if sector == "cross_sector":
             query += " AND (sectors LIKE ? OR sectors LIKE ?)"

@@ -252,6 +252,10 @@ GNEWS_QUERIES = {
     "mobile_electronics": "smartphone India OR Samsung India OR Apple India",
 }
 
+# Google News RSS + NewsAPI top-headlines (short queries work best)
+GOOGLE_NEWS_QUERIES = dict(GNEWS_QUERIES)
+NEWSAPI_HEADLINE_QUERIES = dict(GNEWS_QUERIES)
+
 
 def normalize_sector_tags(sectors):
     normalized = []
