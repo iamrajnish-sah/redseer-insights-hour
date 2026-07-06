@@ -33,6 +33,8 @@ import classify_and_summarize
 import dedupe
 import email_digest
 import admin_auth
+import auto_refresh
+from db_persist import restore_db, save_db
 
 from sector_keywords import SECTOR_LABELS, GNEWS_QUERIES, normalize_sector_tags
 
@@ -44,6 +46,7 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 @app.on_event("startup")
 def on_startup():
+    restore_db(database.DB_PATH)
     database.init_db()
 
 
@@ -101,6 +104,32 @@ def get_articles(sector: str = None, pub_date: str = None, search: str = None):
     rows = database.get_relevant_articles(pub_date=pub_date, sector=sector, search=search)
     articles = [_row_to_dict(r) for r in rows]
     return articles
+
+
+@app.get("/api/auto-refresh/status")
+def auto_refresh_status():
+    return auto_refresh.refresh_status()
+
+
+@app.post("/api/auto-refresh")
+def auto_refresh_now():
+    """Public endpoint: refresh feeds when news is empty or older than AUTO_REFRESH_HOURS."""
+    try:
+        return auto_refresh.try_auto_refresh(force=False)
+    except Exception as exc:
+        raise HTTPException(500, f"Auto refresh failed: {exc}") from exc
+
+
+@app.get("/api/cron/refresh")
+def cron_refresh(authorization: str = Header(default=None, alias="Authorization")):
+    """Vercel Cron hits this 4× daily to keep news current."""
+    cron_secret = os.environ.get("CRON_SECRET")
+    if cron_secret and authorization != f"Bearer {cron_secret}":
+        raise HTTPException(401, "Unauthorized")
+    try:
+        return auto_refresh.try_auto_refresh(force=True)
+    except Exception as exc:
+        raise HTTPException(500, f"Cron refresh failed: {exc}") from exc
 
 
 @app.get("/api/admin/status")
@@ -193,6 +222,7 @@ def refresh_rss(_: None = Depends(admin_auth.require_admin)):
         )
         if errors:
             msg += f" {len(errors)} feed(s) failed: {errors[0]}"
+        save_db(database.DB_PATH)
         return {
             "fetched": stats["fetched"],
             "matched": stats["matched"],
@@ -223,6 +253,7 @@ def refresh_newsapi(_: None = Depends(admin_auth.require_admin)):
     inserted, new_ids, refreshed_ids = database.insert_articles(articles)
     dedupe_stats = dedupe.run_all_dedupes()
     merged = dedupe_stats["total_merged"]
+    save_db(database.DB_PATH)
     return {
         "fetched": stats["fetched"],
         "matched": stats["matched"],
@@ -271,6 +302,7 @@ def refresh_gnews(_: None = Depends(admin_auth.require_admin)):
                 msg += " Daily GNews quota used — resets at midnight UTC."
             else:
                 msg += f" {len(errors)} sector query failed."
+        save_db(database.DB_PATH)
         return {
             "fetched": stats["fetched"],
             "raw_from_api": raw_from_api,

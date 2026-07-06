@@ -6,5 +6,11 @@
     "app.py": {
       "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/refresh",
+      "schedule": "0 2,8,14,20 * * *"
+    }
+  ]
 }

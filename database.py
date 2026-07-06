@@ -10,7 +10,7 @@ import os
 import sqlite3
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 DB_PATH = os.environ.get(
@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS articles (
     title_key TEXT,
     UNIQUE(origin, source, pub_date, page, article_id, url)
 );
+
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -56,7 +61,7 @@ def get_conn():
 
 def init_db():
     with get_conn() as conn:
-        conn.execute(SCHEMA)
+        conn.executescript(SCHEMA)
         try:
             conn.execute("ALTER TABLE articles ADD COLUMN fetched_at TEXT")
         except sqlite3.OperationalError:
@@ -92,6 +97,53 @@ def init_db():
 
 def _now_iso():
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def get_meta(key, default=None):
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    if not row:
+        return default
+    return row["value"]
+
+
+def set_meta(key, value):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            (key, str(value)),
+        )
+
+
+def acquire_refresh_lock(key="refresh_lock_until", minutes=15):
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        if row and row["value"]:
+            try:
+                until = datetime.fromisoformat(row["value"])
+                if datetime.now() < until:
+                    return False
+            except ValueError:
+                pass
+        until = (datetime.now() + timedelta(minutes=minutes)).isoformat(timespec="seconds")
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            (key, until),
+        )
+    return True
+
+
+def release_refresh_lock(key="refresh_lock_until"):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM meta WHERE key = ?", (key,))
+
+
+def get_relevant_count():
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) c FROM articles WHERE relevant = 1 AND duplicate_of IS NULL"
+        ).fetchone()
+    return row["c"] if row else 0
 
 
 def _normalize_url(url):

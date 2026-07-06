@@ -575,6 +575,33 @@ async function init() {
   SECTORS = await (await fetch(API + "/api/sectors")).json();
   buildTabs();
   await loadArticles();
+  await maybeAutoRefresh();
+}
+
+async function maybeAutoRefresh() {
+  try {
+    const status = await (await fetch(API + "/api/auto-refresh/status")).json();
+    if (!status.stale && status.article_count > 0) return;
+    setStatus("Fetching latest sector news — this may take a minute ...");
+    const resp = await fetch(API + "/api/auto-refresh", { method: "POST" });
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || "Auto refresh failed");
+    if (data.ran) {
+      await loadArticles();
+      const added = data.total_inserted || 0;
+      setStatus(
+        added > 0
+          ? `News updated automatically — ${added} new article(s) added.`
+          : "News feeds checked — dashboard is up to date."
+      );
+    } else if (data.reason === "already_running") {
+      setStatus("News refresh already running — check back in a moment.");
+    } else {
+      setStatus("");
+    }
+  } catch (e) {
+    setStatus(e.message || "Could not auto-refresh news.", true);
+  }
 }
 
 function adminHeaders(extra = {}) {
