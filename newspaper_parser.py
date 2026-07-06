@@ -14,7 +14,7 @@ import json
 import os
 import re
 
-from epub_parser import Article, guess_source_and_date, parse_epub
+from epub_parser import Article, guess_source_and_date, display_source_name, parse_epub
 
 SUPPORTED_EXTENSIONS = {
     ".epub",
@@ -240,15 +240,21 @@ def parse_newspaper(path):
     """Parse any supported newspaper upload. Returns (articles, format, method)."""
     ext = file_extension(path)
     if ext == ".epub":
-        return parse_epub(path), "epub", "epub_structure"
-    if ext == ".pdf":
+        articles, file_format, method = parse_epub(path), "epub", "epub_structure"
+    elif ext == ".pdf":
         articles, method = parse_pdf(path)
-        return articles, "pdf", method
-    if ext in IMAGE_EXTENSIONS:
+        file_format, method = "pdf", method
+    elif ext in IMAGE_EXTENSIONS:
         articles, method = parse_image(path)
-        return articles, "image", method
-    if ext == ".txt":
+        file_format, method = "image", method
+    elif ext == ".txt":
         articles, method = parse_txt(path)
-        return articles, "txt", method
-    allowed = ", ".join(sorted(SUPPORTED_EXTENSIONS))
-    raise RuntimeError(f"Unsupported file type '{ext}'. Allowed: {allowed}")
+        file_format, method = "txt", method
+    else:
+        allowed = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+        raise RuntimeError(f"Unsupported file type '{ext}'. Allowed: {allowed}")
+
+    label = display_source_name(os.path.basename(path))
+    for article in articles:
+        article.source = label
+    return articles, file_format, method

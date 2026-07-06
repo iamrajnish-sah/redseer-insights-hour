@@ -978,8 +978,8 @@ async function uploadNewspaper(event) {
   formData.append("file", file);
   try {
     const resp = await adminFetch(API + "/api/upload-newspaper", { method: "POST", body: formData });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.detail || "Upload failed");
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || data.message || "Upload failed");
     setStatus(data.message || `Parsed ${data.parsed} articles, ${data.inserted} new.`);
     markNewArticles(data.new_ids || []);
     await loadArticles(); await loadStats();
@@ -1031,11 +1031,11 @@ async function refreshGNews() {
 
 async function processArticles() {
   setBtnLoading("btnGemini", true);
-  setStatus("Processing with Gemini — this may take a while ...");
+  setStatus("Processing with Gemini — this may take up to a minute ...");
   try {
     const resp = await adminFetch(API + "/api/process", { method: "POST" });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.detail || "Processing failed");
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || data.message || "Processing failed");
     let msg = `Done. Classified ${data.classified}, ${data.relevant} marked relevant.`;
     if (data.message) msg += ` ${data.message}`;
     setStatus(msg);

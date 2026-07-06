@@ -327,57 +327,73 @@ def process_unprocessed(_: None = Depends(admin_auth.require_admin)):
     if not (os.environ.get("GEMINIAPIKEY") or os.environ.get("GEMINI_API_KEY")):
         raise HTTPException(400, "GEMINIAPIKEY is not set on the server")
 
-    rows = database.get_unprocessed()
-    if not rows:
-        return {"classified": 0, "relevant": 0, "message": "Nothing to process."}
+    try:
+        rows = database.get_unprocessed()
+        if not rows:
+            return {"classified": 0, "relevant": 0, "message": "Nothing to process."}
 
-    process_rows, settings, pending_by_origin, total_pending = classify_and_summarize.get_rows_for_processing()
-    if not process_rows:
-        return {
-            "classified": 0,
-            "relevant": 0,
-            "message": "Nothing to process within current Gemini limits.",
-            "pending_in_scope": total_pending,
-            "pending_by_origin": pending_by_origin,
-        }
+        process_rows, settings, pending_by_origin, total_pending = classify_and_summarize.get_rows_for_processing()
+        if not process_rows:
+            return {
+                "classified": 0,
+                "relevant": 0,
+                "message": "Nothing to process within current Gemini limits.",
+                "pending_in_scope": total_pending,
+                "pending_by_origin": pending_by_origin,
+            }
 
-    results, stats = classify_and_summarize.classify_batch(
-        process_rows,
-        body_chars=settings["body_chars"],
-    )
-    for row in process_rows:
-        r = results.get(row["id"])
-        if r:
-            database.update_classification(
-                row["id"], r["is_relevant"], normalize_sector_tags(r["sectors"]), r["summary"]
+        batch_opts = classify_and_summarize.batch_settings()
+        results, stats = classify_and_summarize.classify_batch(
+            process_rows,
+            batch_size=batch_opts["batch_size"],
+            pause_between_calls=batch_opts["pause_between_calls"],
+            body_chars=settings["body_chars"],
+        )
+        for row in process_rows:
+            r = results.get(row["id"])
+            if r:
+                database.update_classification(
+                    row["id"], r["is_relevant"], normalize_sector_tags(r["sectors"]), r["summary"]
+                )
+
+        relevant_count = sum(1 for r in results.values() if r["is_relevant"])
+        dedupe_stats = dedupe.run_all_dedupes()
+
+        message = None
+        if stats["models_used"]:
+            message = f"Used models: {', '.join(stats['models_used'])}"
+        if stats["batches_failed"]:
+            extra = f"{stats['batches_failed']} batch(es) skipped — Gemini quota or API error."
+            message = f"{message}. {extra}" if message else extra
+        remaining = total_pending - len(process_rows)
+        if remaining > 0:
+            extra = (
+                f"{remaining} still pending — click Process with Gemini again "
+                f"(Vercel processes up to {settings['limit'] or 15} articles per click)."
+            )
+            message = f"{message}. {extra}" if message else extra
+        if not results and process_rows:
+            message = (
+                message or "Gemini could not classify any articles in this batch. "
+                "Check GEMINIAPIKEY and try again."
             )
 
-    relevant_count = sum(1 for r in results.values() if r["is_relevant"])
-
-    dedupe_stats = dedupe.run_all_dedupes()
-
-    message = None
-    if stats["models_used"]:
-        message = f"Used models: {', '.join(stats['models_used'])}"
-    if stats["batches_failed"]:
-        extra = f"{stats['batches_failed']} batch(es) skipped — all models hit quota."
-        message = f"{message}. {extra}" if message else extra
-    remaining = total_pending - len(process_rows)
-    if remaining > 0:
-        extra = f"{remaining} still pending — run again tomorrow or raise GEMINI_MAX_ARTICLES."
-        message = f"{message}. {extra}" if message else extra
-
-    return {
-        "classified": len(results),
-        "relevant": relevant_count,
-        "models_used": stats["models_used"],
-        "batches_failed": stats["batches_failed"],
-        "processed_now": len(process_rows),
-        "pending_in_scope": total_pending,
-        "pending_by_origin": pending_by_origin,
-        "message": message,
-        "merged_duplicates": dedupe_stats["total_merged"],
-    }
+        save_db(database.DB_PATH)
+        return {
+            "classified": len(results),
+            "relevant": relevant_count,
+            "models_used": stats["models_used"],
+            "batches_failed": stats["batches_failed"],
+            "processed_now": len(process_rows),
+            "pending_in_scope": total_pending,
+            "pending_by_origin": pending_by_origin,
+            "message": message,
+            "merged_duplicates": dedupe_stats["total_merged"],
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, f"Gemini processing failed: {exc}") from exc
 
 
 @app.post("/api/dedupe-all")

@@ -142,7 +142,9 @@ def _parse_retry_seconds(exc: Exception):
 
 def _classification_settings():
     """Tune via env vars to control Gemini usage."""
-    max_articles = os.environ.get("GEMINI_MAX_ARTICLES", "80").strip()
+    max_articles = os.environ.get("GEMINI_MAX_ARTICLES", "").strip()
+    if not max_articles:
+        max_articles = "15" if os.environ.get("VERCEL") else "80"
     max_days = os.environ.get("GEMINI_MAX_DAYS", "7").strip()
     origins = os.environ.get("GEMINI_ORIGINS", "epub,newspaper").strip()
 
@@ -151,6 +153,16 @@ def _classification_settings():
         "max_days": int(max_days) if max_days else None,
         "origins": [o.strip() for o in origins.split(",") if o.strip()] or None,
         "body_chars": int(os.environ.get("GEMINI_BODY_CHARS", "500")),
+    }
+
+
+def batch_settings():
+    """Smaller batches on Vercel to stay within the 60s function timeout."""
+    if os.environ.get("VERCEL"):
+        return {"batch_size": 5, "pause_between_calls": 1.0}
+    return {
+        "batch_size": int(os.environ.get("GEMINI_BATCH_SIZE", "8")),
+        "pause_between_calls": float(os.environ.get("GEMINI_BATCH_PAUSE", "2.0")),
     }
 
 

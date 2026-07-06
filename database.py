@@ -77,6 +77,7 @@ def init_db():
         _backfill_title_keys(conn)
         dedupe_by_url(conn)
         dedupe_by_title(conn)
+        _normalize_newspaper_sources(conn)
         try:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_articles_title_key "
@@ -93,6 +94,16 @@ def init_db():
             )
         except sqlite3.OperationalError:
             pass
+
+
+def _normalize_newspaper_sources(conn):
+    """Fix legacy upload labels (e.g. Mint Delhi -> Mint Newspaper)."""
+    conn.execute(
+        """UPDATE articles SET source = 'Mint Newspaper'
+           WHERE origin IN ('epub', 'newspaper')
+           AND lower(source) LIKE '%mint%'
+           AND source != 'Mint Newspaper'"""
+    )
 
 
 def _now_iso():

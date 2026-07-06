@@ -35,11 +35,11 @@ class Article:
 
 def guess_source_and_date(file_path: str):
     """Try to pull a human-readable source name + date from the filename,
-    e.g. 'mint-delhi_01-07-2026__Kobo_.epub' -> ('Mint Delhi', '2026-07-01')"""
+    e.g. 'mint-delhi_01-07-2026__Kobo_.epub' -> ('Mint Newspaper', '2026-07-01')"""
     fname = file_path.replace("\\", "/").split("/")[-1]
     stem = fname.rsplit(".", 1)[0]
     name_part = stem.split("_")[0]
-    source = name_part.replace("-", " ").title() or "Newspaper Upload"
+    source = display_source_name(fname)
 
     date_match = re.search(r"(\d{2})-(\d{2})-(\d{4})", fname)
     if date_match:
@@ -53,6 +53,29 @@ def guess_source_and_date(file_path: str):
             pub_date = str(date.today())
 
     return source, pub_date
+
+
+def display_source_name(filename: str) -> str:
+    """Friendly label shown on news cards for uploaded newspapers."""
+    fname = (filename or "").replace("\\", "/").split("/")[-1]
+    stem = fname.rsplit(".", 1)[0].lower()
+    name_part = stem.split("_")[0]
+
+    if "mint" in stem or "mint" in name_part:
+        return "Mint Newspaper"
+    if "economic" in stem and "times" in stem:
+        return "Economic Times Newspaper"
+    if "business" in stem and "standard" in stem:
+        return "Business Standard Newspaper"
+    if "hindu" in stem:
+        return "The Hindu Newspaper"
+    if "livemint" in stem or "live-mint" in stem:
+        return "LiveMint Newspaper"
+
+    label = name_part.replace("-", " ").strip().title() or "Newspaper Upload"
+    if "newspaper" not in label.lower():
+        label = f"{label} Newspaper"
+    return label
 
 
 def _guess_source_and_date(epub_path: str):
