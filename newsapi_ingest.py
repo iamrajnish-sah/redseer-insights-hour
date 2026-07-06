@@ -6,11 +6,12 @@ Pulls sector-targeted articles from NewsAPI.org. Results are tagged immediately
 
 Requires: NEWSAPIKEY environment variable (https://newsapi.org)
 
-IMPORTANT: Free NewsAPI keys only allow /everything from localhost. On Vercel we
-use /top-headlines?country=in (works in production).
+Production (Vercel): /everything is blocked off localhost, so we use
+  /everything?domains=<Indian publishers> per sector (works on free tier).
+  Fallback: top-headlines?sources=the-times-of-india,the-hindu
+  — country=in always returns 0 on NewsAPI.
 
-NOTE: top-headlines does NOT support boolean OR queries — we split OR chains into
-simple single-keyword searches.
+Local dev: full /everything sector OR queries (~300 articles).
 """
 
 import os
@@ -20,11 +21,19 @@ import requests
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from sector_keywords import NEWSAPI_HEADLINE_QUERIES, NEWSAPI_QUERIES, match_sectors, make_summary
+from sector_keywords import (
+    NEWSAPI_QUERIES,
+    is_india_relevant,
+    match_sectors,
+    make_summary,
+)
 from dedupe import normalize_title
 
 NEWSAPI_EVERYTHING_URL = "https://newsapi.org/v2/everything"
 NEWSAPI_TOP_URL = "https://newsapi.org/v2/top-headlines"
+
+# country=in is empty on NewsAPI — these source IDs do return Indian headlines.
+DEFAULT_INDIA_SOURCES = "the-times-of-india,the-hindu"
 
 
 @dataclass
@@ -50,7 +59,7 @@ def _api_key():
 
 
 def _page_size():
-    return int(os.environ.get("NEWSAPI_PAGE_SIZE", "25"))
+    return int(os.environ.get("NEWSAPI_PAGE_SIZE", "100"))
 
 
 def _use_headlines():
@@ -61,25 +70,18 @@ def _use_headlines():
     return bool(os.environ.get("VERCEL"))
 
 
+def _india_sources():
+    raw = os.environ.get("NEWSAPI_INDIA_SOURCES", DEFAULT_INDIA_SOURCES)
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
 def _normalize_url(url):
     if not url:
         return None
     return url.strip().rstrip("/") or url.strip()
 
 
-def _prepare_article_loose(article):
-    """Tag by keyword match only (used for broad India headline fallbacks)."""
-    sectors = match_sectors(article.title, article.body, article.subtitle)
-    if not sectors:
-        return None
-    article.sectors = sectors
-    article.pre_classified = True
-    article.auto_summary = make_summary(article.title, article.body or article.subtitle)
-    return article
-
-
 def _headline_search_terms(query, max_terms=3):
-    """top-headlines only accepts simple keywords — split 'A OR B OR C' into tries."""
     q = (query or "").strip()
     if " when:" in q:
         q = q.split(" when:")[0].strip()
@@ -97,6 +99,16 @@ def _headline_search_terms(query, max_terms=3):
     return [q[:100]] if q else []
 
 
+def _prepare_article_loose(article):
+    sectors = match_sectors(article.title, article.body, article.subtitle)
+    if not sectors:
+        return None
+    article.sectors = sectors
+    article.pre_classified = True
+    article.auto_summary = make_summary(article.title, article.body or article.subtitle)
+    return article
+
+
 def _prepare_article(article, query_sector):
     sectors = match_sectors(article.title, article.body, article.subtitle)
     if query_sector == "ride_hailing":
@@ -110,118 +122,160 @@ def _prepare_article(article, query_sector):
     return article
 
 
-def _articles_from_payload(items, query_label, endpoint):
-    articles = []
-    for item in items:
-        title = (item.get("title") or "").strip()
-        if not title or title == "[Removed]":
-            continue
-        pub_date = (item.get("publishedAt") or str(date.today()))[:10]
-        source_name = (item.get("source") or {}).get("name") or "Unknown"
-        article = Article(
-            source=f"{source_name} (NewsAPI: {query_label})",
-            pub_date=pub_date,
-            title=title,
-            subtitle=item.get("description") or "",
-            byline=item.get("author") or "",
-            body=item.get("content") or item.get("description") or "",
-            url=item.get("url"),
-            image_url=item.get("urlToImage") or None,
-        )
-        prepared = _prepare_article(article, query_label)
-        if prepared:
-            articles.append(prepared)
-    return articles
+def _item_to_article(item, source_label):
+    title = (item.get("title") or "").strip()
+    if not title or title == "[Removed]" or title.lower() == "google news":
+        return None
+    pub_date = (item.get("publishedAt") or str(date.today()))[:10]
+    publisher = (item.get("source") or {}).get("name") or "Unknown"
+    return Article(
+        source=f"{publisher} (NewsAPI: {source_label})",
+        pub_date=pub_date,
+        title=title,
+        subtitle=item.get("description") or "",
+        byline=item.get("author") or "",
+        body=item.get("content") or item.get("description") or "",
+        url=item.get("url"),
+        image_url=item.get("urlToImage") or None,
+    )
 
 
-def fetch_query_headlines(query_label, query, api_key, page_size=25):
-    terms = _headline_search_terms(query)
-    last_err = None
-    combined_raw = []
-    combined_items = []
-    seen_urls = set()
-
-    for term in terms:
-        params = {
-            "country": "in",
-            "q": term,
-            "pageSize": min(page_size, 100),
-            "apiKey": api_key,
-        }
-        resp = requests.get(NEWSAPI_TOP_URL, params=params, timeout=15)
-        if resp.status_code != 200:
-            msg = resp.text[:200]
-            last_err = f"{query_label}: HTTP {resp.status_code} — {msg}"
-            print(f"  [warning] NewsAPI top-headlines '{query_label}' ({term}): {resp.status_code}")
-            continue
-
-        payload = resp.json()
-        if payload.get("status") == "error":
-            last_err = f"{query_label}: {payload.get('message') or 'NewsAPI error'}"
-            continue
-
-        raw = payload.get("articles") or []
-        if not raw:
-            continue
-
-        combined_raw.extend(raw)
-        for article in _articles_from_payload(raw, query_label, "top-headlines"):
-            key = _normalize_url(article.url) or normalize_title(article.title)
-            if key and key in seen_urls:
-                continue
-            if key:
-                seen_urls.add(key)
-            combined_items.append(article)
-
-        if combined_items:
-            break
-
-    if not combined_items and last_err:
-        return [], len(combined_raw), last_err
-    if not combined_items and terms:
-        return [], 0, f"{query_label}: 0 results for {', '.join(terms)}"
-    return combined_items, len(combined_raw), None
+def _request_top_headlines(params):
+    resp = requests.get(NEWSAPI_TOP_URL, params=params, timeout=20)
+    if resp.status_code != 200:
+        return None, f"HTTP {resp.status_code} — {resp.text[:200]}"
+    payload = resp.json()
+    if payload.get("status") == "error":
+        return None, payload.get("message") or "NewsAPI error"
+    return payload, None
 
 
-def fetch_india_category_headlines(category, api_key, page_size=50):
-    """Fallback: broad India business/tech headlines when keyword searches return nothing."""
+def fetch_india_source_headlines(api_key, page_size=100):
+    """Fetch from Indian publisher source IDs (country=in does not work on NewsAPI)."""
+    sources = ",".join(_india_sources())
     params = {
-        "country": "in",
-        "category": category,
+        "sources": sources,
         "pageSize": min(page_size, 100),
         "apiKey": api_key,
     }
-    resp = requests.get(NEWSAPI_TOP_URL, params=params, timeout=15)
-    if resp.status_code != 200:
-        msg = resp.text[:200]
-        return [], 0, f"India/{category}: HTTP {resp.status_code} — {msg}"
-
-    payload = resp.json()
-    if payload.get("status") == "error":
-        return [], 0, f"India/{category}: {payload.get('message') or 'NewsAPI error'}"
+    payload, err = _request_top_headlines(params)
+    if err:
+        return [], 0, f"India sources: {err}"
 
     raw = payload.get("articles") or []
     articles = []
     for item in raw:
-        title = (item.get("title") or "").strip()
-        if not title or title == "[Removed]":
+        article = _item_to_article(item, "India sources")
+        if not article:
             continue
-        pub_date = (item.get("publishedAt") or str(date.today()))[:10]
-        source_name = (item.get("source") or {}).get("name") or "Unknown"
-        article = Article(
-            source=f"{source_name} (NewsAPI India {category})",
-            pub_date=pub_date,
-            title=title,
-            subtitle=item.get("description") or "",
-            byline=item.get("author") or "",
-            body=item.get("content") or item.get("description") or "",
-            url=item.get("url"),
-            image_url=item.get("urlToImage") or None,
-        )
         prepared = _prepare_article_loose(article)
         if prepared:
             articles.append(prepared)
     return articles, len(raw), None
+
+
+def fetch_global_category_headlines(category, api_key, page_size=100):
+    """Global business/tech headlines — keep India-relevant stories only."""
+    params = {
+        "category": category,
+        "pageSize": min(page_size, 100),
+        "apiKey": api_key,
+    }
+    payload, err = _request_top_headlines(params)
+    if err:
+        return [], 0, f"{category}: {err}"
+
+    raw = payload.get("articles") or []
+    articles = []
+    for item in raw:
+        article = _item_to_article(item, f"global {category}")
+        if not article:
+            continue
+        if not is_india_relevant(
+            article.title, article.body, article.url, article.url
+        ):
+            continue
+        prepared = _prepare_article_loose(article)
+        if prepared:
+            articles.append(prepared)
+    return articles, len(raw), None
+
+
+INDIA_NEWS_DOMAINS = (
+    "livemint.com,economictimes.indiatimes.com,financialexpress.com,"
+    "business-standard.com,moneycontrol.com,inc42.com,yourstory.com,"
+    "hindustantimes.com,thehindu.com,timesofindia.indiatimes.com"
+)
+
+
+def _everything_blocked(message):
+    if not message:
+        return False
+    lowered = message.lower()
+    return any(
+        token in lowered
+        for token in (
+            "localhost",
+            "developer",
+            "not authorized",
+            "restricted",
+            "upgrade",
+            "availability",
+        )
+    )
+
+
+def fetch_query_everything_domains(query_label, query, api_key, page_size=25):
+    """Indian publisher domains — allowed on Vercel when broad /everything is not."""
+    from_date = (date.today() - timedelta(days=int(os.environ.get("NEWSAPI_DAYS_BACK", "7")))).isoformat()
+    domains = os.environ.get("NEWSAPI_INDIA_DOMAINS", INDIA_NEWS_DOMAINS)
+    max_terms = int(os.environ.get("NEWSAPI_DOMAIN_TERMS", "3"))
+    articles = []
+    seen_urls = set()
+    seen_titles = set()
+    raw_total = 0
+    last_error = None
+
+    for index, term in enumerate(_headline_search_terms(query, max_terms=max_terms)):
+        if index > 0:
+            time.sleep(float(os.environ.get("NEWSAPI_REQUEST_DELAY", "0.6")))
+        search_q = term if "india" in term.lower() else f"{term} India"
+        params = {
+            "q": search_q,
+            "domains": domains,
+            "language": "en",
+            "sortBy": "publishedAt",
+            "from": from_date,
+            "pageSize": min(page_size, 100),
+            "apiKey": api_key,
+        }
+        resp = requests.get(NEWSAPI_EVERYTHING_URL, params=params, timeout=20)
+        if resp.status_code != 200:
+            last_error = f"{query_label}: HTTP {resp.status_code} — {resp.text[:200]}"
+            continue
+
+        payload = resp.json()
+        if payload.get("status") == "error":
+            last_error = f"{query_label}: {payload.get('message') or 'NewsAPI error'}"
+            if _everything_blocked(last_error):
+                return [], raw_total, last_error
+            continue
+
+        raw = payload.get("articles") or []
+        raw_total += len(raw)
+        sector_items = []
+        for item in raw:
+            article = _item_to_article(item, query_label)
+            if not article:
+                continue
+            prepared = _prepare_article(article, query_label)
+            if prepared:
+                sector_items.append(prepared)
+        _dedupe_into(articles, seen_urls, seen_titles, sector_items)
+
+    if not articles and last_error:
+        return [], raw_total, last_error
+    return articles, raw_total, None
 
 
 def fetch_query_everything(query_label, query, api_key, page_size=25):
@@ -234,10 +288,9 @@ def fetch_query_everything(query_label, query, api_key, page_size=25):
         "pageSize": min(page_size, 100),
         "apiKey": api_key,
     }
-    resp = requests.get(NEWSAPI_EVERYTHING_URL, params=params, timeout=15)
+    resp = requests.get(NEWSAPI_EVERYTHING_URL, params=params, timeout=20)
     if resp.status_code != 200:
         msg = resp.text[:200]
-        print(f"  [warning] NewsAPI everything '{query_label}': {resp.status_code} {msg}")
         return [], 0, f"{query_label}: HTTP {resp.status_code} — {msg}"
 
     payload = resp.json()
@@ -246,14 +299,106 @@ def fetch_query_everything(query_label, query, api_key, page_size=25):
         return [], 0, f"{query_label}: {err}"
 
     raw = payload.get("articles") or []
-    items = _articles_from_payload(raw, query_label, "everything")
-    return items, len(raw), None
+    articles = []
+    for item in raw:
+        article = _item_to_article(item, query_label)
+        if not article:
+            continue
+        prepared = _prepare_article(article, query_label)
+        if prepared:
+            articles.append(prepared)
+    return articles, len(raw), None
 
 
-def fetch_query(query_label, query, api_key, page_size=25):
-    if _use_headlines():
-        return fetch_query_headlines(query_label, query, api_key, page_size)
-    return fetch_query_everything(query_label, query, api_key, page_size)
+def _dedupe_into(all_articles, seen_urls, seen_titles, items):
+    kept = 0
+    skipped = 0
+    for article in items:
+        url = _normalize_url(article.url)
+        title_key = normalize_title(article.title)
+        if url and url in seen_urls:
+            skipped += 1
+            continue
+        if title_key and title_key in seen_titles:
+            skipped += 1
+            continue
+        if url:
+            seen_urls.add(url)
+        if title_key:
+            seen_titles.add(title_key)
+        all_articles.append(article)
+        kept += 1
+    return kept, skipped
+
+
+def _fetch_sector_queries(api_key, page_size, fetch_fn, label_prefix):
+    all_articles = []
+    seen_urls = set()
+    seen_titles = set()
+    raw_from_api = 0
+    skipped_dupes = 0
+    errors = []
+    blocked = False
+
+    for index, (label, q) in enumerate(NEWSAPI_QUERIES.items()):
+        if index > 0:
+            time.sleep(float(os.environ.get("NEWSAPI_REQUEST_DELAY", "0.6")))
+        print(f"Fetching NewsAPI ({label_prefix}): {label} ...")
+        items, raw_count, err = fetch_fn(label, q, api_key, page_size)
+        raw_from_api += raw_count
+        if err:
+            errors.append(err)
+            if _everything_blocked(err):
+                blocked = True
+                break
+        kept, skipped = _dedupe_into(all_articles, seen_urls, seen_titles, items)
+        skipped_dupes += skipped
+        print(f"  -> {kept} kept ({raw_count} from API)")
+
+    return all_articles, raw_from_api, skipped_dupes, errors, blocked
+
+
+def fetch_all_headlines_production(api_key, page_size):
+    """Vercel-safe ingestion: Indian sources + India-filtered global categories."""
+    all_articles = []
+    seen_urls = set()
+    seen_titles = set()
+    raw_from_api = 0
+    skipped_dupes = 0
+    errors = []
+
+    print("Fetching NewsAPI (top-headlines): India sources ...")
+    items, raw_count, err = fetch_india_source_headlines(api_key, page_size)
+    raw_from_api += raw_count
+    if err:
+        errors.append(err)
+    kept, skipped = _dedupe_into(all_articles, seen_urls, seen_titles, items)
+    skipped_dupes += skipped
+    print(f"  -> {kept} kept ({raw_count} from API)")
+
+    for category in ("business", "technology"):
+        time.sleep(float(os.environ.get("NEWSAPI_REQUEST_DELAY", "0.6")))
+        print(f"Fetching NewsAPI (top-headlines): global {category} (India filter) ...")
+        items, raw_count, err = fetch_global_category_headlines(category, api_key, page_size)
+        raw_from_api += raw_count
+        if err:
+            errors.append(err)
+        kept, skipped = _dedupe_into(all_articles, seen_urls, seen_titles, items)
+        skipped_dupes += skipped
+        print(f"  -> {kept} kept ({raw_count} from API)")
+
+    return all_articles, raw_from_api, skipped_dupes, errors, "top-headlines-india"
+
+
+def _fetch_all_result(articles, raw, skipped, errors, endpoint):
+    return articles, {
+        "fetched": len(articles),
+        "raw_from_api": raw,
+        "matched": len(articles),
+        "skipped": skipped,
+        "errors": errors,
+        "endpoint": endpoint,
+    }
 
 
 def fetch_all(queries=None, page_size=None):
@@ -269,85 +414,63 @@ def fetch_all(queries=None, page_size=None):
             "endpoint": "none",
         }
 
-    if _use_headlines():
-        queries = queries or NEWSAPI_HEADLINE_QUERIES
-        endpoint = "top-headlines"
-    else:
-        queries = queries or NEWSAPI_QUERIES
-        endpoint = "everything"
-
     page_size = page_size or _page_size()
-    all_articles = []
-    seen_urls = set()
-    seen_titles = set()
-    raw_from_api = 0
-    skipped_dupes = 0
+    production = _use_headlines()
+    raw_total = 0
+    skipped_total = 0
     errors = []
+    blocked = False
 
-    for index, (label, q) in enumerate(queries.items()):
-        if index > 0:
-            time.sleep(float(os.environ.get("NEWSAPI_REQUEST_DELAY", "0.6")))
-        print(f"Fetching NewsAPI ({endpoint}): {label} ...")
-        items, raw_count, err = fetch_query(label, q, api_key, page_size)
-        raw_from_api += raw_count
-        if err:
-            errors.append(err)
-        kept = 0
-        for article in items:
-            url = _normalize_url(article.url)
-            title_key = normalize_title(article.title)
-            if url and url in seen_urls:
-                skipped_dupes += 1
-                continue
-            if title_key and title_key in seen_titles:
-                skipped_dupes += 1
-                continue
-            if url:
-                seen_urls.add(url)
-            if title_key:
-                seen_titles.add(title_key)
-            all_articles.append(article)
-            kept += 1
-        print(f"  -> {kept} kept ({raw_count} from API)")
+    # On Vercel, broad /everything is blocked — Indian-domain queries work and are tried first.
+    fetch_order = (
+        [
+            (fetch_query_everything_domains, "everything-domains"),
+            (fetch_query_everything, "everything"),
+        ]
+        if production
+        else [
+            (fetch_query_everything, "everything"),
+            (fetch_query_everything_domains, "everything-domains"),
+        ]
+    )
 
-    if raw_from_api == 0 and _use_headlines() and not all_articles:
-        print("  [info] NewsAPI sector keywords returned 0 — trying India business/tech headlines ...")
-        time.sleep(float(os.environ.get("NEWSAPI_REQUEST_DELAY", "0.6")))
-        for category in ("business", "technology"):
-            items, raw_count, err = fetch_india_category_headlines(category, api_key, page_size)
-            raw_from_api += raw_count
-            if err:
-                errors.append(err)
-            for article in items:
-                url = _normalize_url(article.url)
-                title_key = normalize_title(article.title)
-                if url and url in seen_urls:
-                    skipped_dupes += 1
-                    continue
-                if title_key and title_key in seen_titles:
-                    skipped_dupes += 1
-                    continue
-                if url:
-                    seen_urls.add(url)
-                if title_key:
-                    seen_titles.add(title_key)
-                all_articles.append(article)
-            if all_articles:
-                break
+    articles = []
+    endpoint = "none"
+    for fetch_fn, label in fetch_order:
+        if articles:
+            break
+        print(f"  [info] NewsAPI strategy: {label} ...")
+        batch, raw, skipped, batch_errors, batch_blocked = _fetch_sector_queries(
+            api_key, page_size, fetch_fn, label
+        )
+        raw_total += raw
+        skipped_total += skipped
+        errors.extend(batch_errors)
+        blocked = blocked or batch_blocked
+        if batch:
+            articles = batch
+            endpoint = label
 
-    stats = {
-        "fetched": len(all_articles),
-        "raw_from_api": raw_from_api,
-        "matched": len(all_articles),
-        "skipped": skipped_dupes,
-        "errors": errors,
-        "endpoint": endpoint,
-    }
-    return all_articles, stats
+    if articles:
+        return _fetch_all_result(articles, raw_total, skipped_total, errors, endpoint)
+
+    # Last resort: Indian publisher source IDs (country=in returns 0 on NewsAPI).
+    print("  [info] using NewsAPI top-headlines from Indian publisher sources ...")
+    articles, raw3, skipped3, errors3, endpoint = fetch_all_headlines_production(
+        api_key, page_size
+    )
+    errors.extend(errors3)
+    return _fetch_all_result(
+        articles,
+        raw_total + raw3,
+        skipped_total + skipped3,
+        errors,
+        endpoint,
+    )
 
 
 if __name__ == "__main__":
     arts, stats = fetch_all()
-    print(f"\nNewsAPI ({stats['endpoint']}): {stats['matched']} kept")
+    print(f"\nNewsAPI ({stats['endpoint']}): {stats['matched']} kept, {stats['raw_from_api']} raw")
     for a in arts[:5]:
         print(f"- [{', '.join(a.sectors)}] {a.title}")
