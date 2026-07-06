@@ -513,16 +513,8 @@
     position: relative;
     height: 184px;
     overflow: hidden;
-    background: linear-gradient(135deg, #e8edf5 0%, #f1f5f9 55%, #eef1f8 100%);
+    background: #eef1f8;
     border-bottom: 1px solid var(--border);
-  }
-  .card-media::after {
-    content: "";
-    position: absolute;
-    inset: auto 0 0 0;
-    height: 56px;
-    background: linear-gradient(to top, rgba(255, 255, 255, 0.92), transparent);
-    pointer-events: none;
   }
   .card-image {
     display: block;
@@ -532,23 +524,139 @@
     transition: transform 0.35s ease;
   }
   .card:hover .card-image {
-    transform: scale(1.03);
+    transform: scale(1.02);
   }
-  .card-media-empty {
+
+  /* Newspaper cards — no image, soft sector tint */
+  .card-newspaper {
+    border-top: 3px solid var(--np-accent, #3b82f6);
+    background: var(--np-bg, #fff);
+  }
+  .card-newspaper.theme-blue {
+    --np-accent: #3b82f6;
+    --np-bg: linear-gradient(165deg, #eff6ff 0%, #ffffff 58%, #f8fafc 100%);
+    --np-badge-bg: #dbeafe;
+    --np-badge-color: #1e40af;
+    --np-chip-bg: rgba(59, 130, 246, 0.12);
+  }
+  .card-newspaper.theme-teal {
+    --np-accent: #0d9488;
+    --np-bg: linear-gradient(165deg, #ecfdf5 0%, #ffffff 58%, #f8fafc 100%);
+    --np-badge-bg: #ccfbf1;
+    --np-badge-color: #0f766e;
+    --np-chip-bg: rgba(13, 148, 136, 0.12);
+  }
+  .card-newspaper.theme-coral {
+    --np-accent: #ea580c;
+    --np-bg: linear-gradient(165deg, #fff7ed 0%, #ffffff 58%, #f8fafc 100%);
+    --np-badge-bg: #ffedd5;
+    --np-badge-color: #c2410c;
+    --np-chip-bg: rgba(234, 88, 12, 0.12);
+  }
+  .card-newspaper.theme-rose {
+    --np-accent: #e11d48;
+    --np-bg: linear-gradient(165deg, #fff1f2 0%, #ffffff 58%, #f8fafc 100%);
+    --np-badge-bg: #ffe4e6;
+    --np-badge-color: #be123c;
+    --np-chip-bg: rgba(225, 29, 72, 0.1);
+  }
+  .card-newspaper.theme-violet {
+    --np-accent: #7c3aed;
+    --np-bg: linear-gradient(165deg, #f5f3ff 0%, #ffffff 58%, #f8fafc 100%);
+    --np-badge-bg: #ede9fe;
+    --np-badge-color: #6d28d9;
+    --np-chip-bg: rgba(124, 58, 237, 0.1);
+  }
+  .card-newspaper.theme-sky {
+    --np-accent: #0284c7;
+    --np-bg: linear-gradient(165deg, #f0f9ff 0%, #ffffff 58%, #f8fafc 100%);
+    --np-badge-bg: #e0f2fe;
+    --np-badge-color: #0369a1;
+    --np-chip-bg: rgba(2, 132, 199, 0.1);
+  }
+  .card-newspaper.theme-emerald {
+    --np-accent: #059669;
+    --np-bg: linear-gradient(165deg, #ecfdf5 0%, #ffffff 58%, #f8fafc 100%);
+    --np-badge-bg: #d1fae5;
+    --np-badge-color: #047857;
+    --np-chip-bg: rgba(5, 150, 105, 0.1);
+  }
+  .card-newspaper.theme-indigo {
+    --np-accent: #4f46e5;
+    --np-bg: linear-gradient(165deg, #eef2ff 0%, #ffffff 58%, #f8fafc 100%);
+    --np-badge-bg: #e0e7ff;
+    --np-badge-color: #4338ca;
+    --np-chip-bg: rgba(79, 70, 229, 0.1);
+  }
+  .card-newspaper.theme-amber {
+    --np-accent: #d97706;
+    --np-bg: linear-gradient(165deg, #fffbeb 0%, #ffffff 58%, #f8fafc 100%);
+    --np-badge-bg: #fef3c7;
+    --np-badge-color: #b45309;
+    --np-chip-bg: rgba(217, 119, 6, 0.12);
+  }
+  .card-newspaper.theme-slate {
+    --np-accent: #475569;
+    --np-bg: linear-gradient(165deg, #f1f5f9 0%, #ffffff 58%, #f8fafc 100%);
+    --np-badge-bg: #e2e8f0;
+    --np-badge-color: #334155;
+    --np-chip-bg: rgba(71, 85, 105, 0.1);
+  }
+  .card-newspaper .card-body {
+    position: relative;
+    padding-top: 14px;
+  }
+  .card-newspaper .card-body::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 72px;
+    height: 72px;
+    border-radius: 0 0 0 72px;
+    background: var(--np-chip-bg);
+    pointer-events: none;
+  }
+  .card-newspaper .badge {
+    background: var(--np-badge-bg);
+    color: var(--np-badge-color);
+    border-color: transparent;
+  }
+  .card-newspaper .card-headline {
+    padding-right: 12px;
+  }
+  .card-np-strip {
     display: flex;
     align-items: center;
-    justify-content: center;
-    color: var(--text-soft);
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 18px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
+    color: var(--np-badge-color, var(--primary));
+    background: var(--np-chip-bg);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
   }
-  .card-media-empty::before {
-    content: "📰";
-    margin-right: 8px;
-    font-size: 1rem;
-    opacity: 0.65;
+  .card-np-strip span:last-child {
+    font-weight: 600;
+    opacity: 0.85;
+    letter-spacing: 0.02em;
+    text-transform: none;
+  }
+  .card-newspaper .card-footer {
+    background: transparent;
+    border-top-color: rgba(15, 23, 42, 0.07);
+  }
+  .card-newspaper .btn-read-more {
+    background: var(--np-badge-bg);
+    border-color: transparent;
+    color: var(--np-badge-color);
+  }
+  .card-newspaper .btn-read-more:hover {
+    filter: brightness(0.97);
+    transform: translateY(-1px);
   }
 </style>
 </head>
@@ -638,6 +746,53 @@ let currentSector = "";
 let articlesCache = [];
 let daysFilter = 7;
 const NEW_HIGHLIGHT_MS = 5 * 60 * 1000;
+const NEWSPAPER_THEMES = {
+  e_commerce: "theme-blue",
+  quick_commerce: "theme-teal",
+  food_delivery: "theme-coral",
+  fashion: "theme-rose",
+  bpc: "theme-violet",
+  e_logistics: "theme-sky",
+  mobile_electronics: "theme-indigo",
+  value_commerce: "theme-emerald",
+  ride_hailing: "theme-amber",
+  cross_sector: "theme-slate",
+  other_relevant: "theme-slate",
+};
+
+function isNewspaperArticle(a) {
+  const src = (a.source || "").toLowerCase();
+  const origin = (a.origin || "").toLowerCase();
+  if (origin === "epub" || origin === "newspaper") return true;
+  if (src.includes("newspaper") || src.includes("mint newspaper")) return true;
+  if (a.page && /^page-\d+/i.test(String(a.page))) return true;
+  if ((a.image_url || "").startsWith("data:")) return true;
+  return false;
+}
+
+function newspaperThemeClass(sectors) {
+  const key = (sectors && sectors[0]) || "cross_sector";
+  return NEWSPAPER_THEMES[key] || "theme-blue";
+}
+
+function buildCardMedia(a) {
+  if (isNewspaperArticle(a)) return "";
+  const url = a.image_url || "";
+  if (!url || url.startsWith("data:")) return "";
+  return `<div class="card-media"><img class="card-image" src="${escapeAttr(url)}" alt="" loading="lazy" onerror="this.closest('.card-media')?.remove();"></div>`;
+}
+
+function buildNewspaperStrip(a) {
+  if (!isNewspaperArticle(a)) return "";
+  const pageLabel = a.page ? a.page.replace(/-/g, " ") : "";
+  return `<div class="card-np-strip"><span>${escapeHtml(a.source || "Newspaper")}</span>${pageLabel ? `<span>${escapeHtml(pageLabel)}</span>` : ""}</div>`;
+}
+
+function displayText(str) {
+  const d = document.createElement("textarea");
+  d.innerHTML = (str || "").replace(/<[^>]+>/g, "");
+  return escapeHtml(d.value);
+}
 let newUntil = {};
 let highlightTimer = null;
 
@@ -1046,25 +1201,26 @@ function renderArticles() {
   list = sortArticles(list);
   list.forEach(a => {
     const card = document.createElement("article");
-    card.className = "card" + (isNewArticle(a.id) ? " is-new" : "");
+    const np = isNewspaperArticle(a);
+    card.className = "card"
+      + (np ? " card-newspaper " + newspaperThemeClass(a.sectors) : "")
+      + (isNewArticle(a.id) ? " is-new" : "");
     const newPill = isNewArticle(a.id) ? '<span class="new-pill">New</span>' : "";
     const badges = a.sectors.map(s => `<span class="badge">${SECTORS[s] || s}</span>`).join("");
     const sourceLabel = a.page ? `${a.source}, ${a.page}` : a.source;
     const link = a.url
       ? `<a class="btn-read-more" href="${escapeAttr(a.url)}" target="_blank" rel="noopener">Read →</a>`
       : "";
-    const image = a.image_url
-      ? `<div class="card-media"><img class="card-image" src="${escapeAttr(a.image_url)}" alt="" loading="lazy" onerror="var m=this.closest('.card-media'); m.classList.add('card-media-empty'); m.textContent='No preview'; this.remove();"></div>`
-      : `<div class="card-media card-media-empty">No preview</div>`;
     card.innerHTML = `
-      ${image}
+      ${buildNewspaperStrip(a)}
+      ${buildCardMedia(a)}
       <div class="card-body">
         <div class="card-badges">${newPill}${badges}</div>
-        <h2 class="card-headline">${escapeHtml(a.title)}</h2>
-        <p class="card-summary">${escapeHtml(a.summary || "")}</p>
+        <h2 class="card-headline">${displayText(a.title)}</h2>
+        <p class="card-summary">${displayText(a.summary || "")}</p>
       </div>
       <div class="card-footer">
-        <span class="card-meta-text">${escapeHtml(sourceLabel)} · ${a.pub_date}</span>
+        <span class="card-meta-text">${displayText(sourceLabel)} · ${a.pub_date}</span>
         ${link}
       </div>
     `;

@@ -206,7 +206,6 @@ def parse_epub(epub_path: str) -> list[Article]:
                         subtitle=subtitle,
                         byline=byline,
                         body=body,
-                        image_url=_art_image_data_url(art_div, page_file, z),
                     )
                 )
 

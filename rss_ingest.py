@@ -10,6 +10,7 @@ Set RSS_KEYWORD_FILTER=false to store every RSS item (old behaviour).
 
 import os
 import re
+import html
 import urllib.parse
 import feedparser
 import requests
@@ -97,10 +98,22 @@ def _fetch_timeout():
 
 
 def _clean_html(raw):
-    return re.sub("<[^<]+?>", "", raw or "").strip()
+    return html.unescape(re.sub("<[^<]+?>", "", raw or "").strip())
 
 
 _IMG_SRC_RE = re.compile(r"""<img[^>]+src=['"]([^'"]+)['"]""", re.I)
+_GOOGLE_IMG_RE = re.compile(
+    r"""https://lh\d+\.googleusercontent\.com/[^"'<>\s]+""",
+    re.I,
+)
+_OG_FETCH_HEADERS = {
+    **RSS_HEADERS,
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
 _OG_IMAGE_PATTERNS = [
     re.compile(
         r"""<meta[^>]+property=['"]og:image(?::secure_url)?['"][^>]+content=['"]([^'"]+)['"]""",
@@ -180,7 +193,7 @@ def _pick_best_image_url(html_fragments):
 
 
 def _og_per_feed_limit():
-    return int(os.environ.get("RSS_OG_PER_FEED", "12"))
+    return int(os.environ.get("RSS_OG_PER_FEED", "20"))
 
 
 def _fetch_og_image(url):
@@ -190,7 +203,7 @@ def _fetch_og_image(url):
     try:
         resp = requests.get(
             url,
-            headers=RSS_HEADERS,
+            headers=_OG_FETCH_HEADERS,
             timeout=_fetch_timeout(),
             allow_redirects=True,
             stream=True,
@@ -199,18 +212,25 @@ def _fetch_og_image(url):
         chunk = b""
         for part in resp.iter_content(8192):
             chunk += part
-            if len(chunk) >= 65536:
+            if len(chunk) >= 98304:
                 break
-        html = chunk.decode("utf-8", errors="ignore")
+        html_text = chunk.decode("utf-8", errors="ignore")
     except Exception:
         return None
 
     for pattern in _OG_IMAGE_PATTERNS:
-        match = pattern.search(html)
+        match = pattern.search(html_text)
         if match:
-            image_url = match.group(1).strip()
+            image_url = html.unescape(match.group(1).strip())
             if image_url and not _is_bad_thumbnail(image_url):
                 return image_url
+
+    google_match = _GOOGLE_IMG_RE.search(html_text)
+    if google_match:
+        image_url = google_match.group(0).rstrip("'\"")
+        if not _is_bad_thumbnail(image_url):
+            return image_url
+
     return None
 
 
