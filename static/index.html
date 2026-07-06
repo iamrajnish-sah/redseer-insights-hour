@@ -521,6 +521,7 @@
       <button class="btn btn-email" id="btnEmail" onclick="sendSectorEmails()">✉ Send Email</button>
       <button class="btn btn-ghost btn-sm" id="btnRefilterRh" onclick="refilterRideHailing()">↺ Refilter ride hailing</button>
       <button class="btn btn-ghost btn-sm" id="btnDedupe" onclick="removeDuplicates()">↺ Remove duplicates</button>
+      <button class="btn btn-ghost btn-sm" id="btnPersist" onclick="saveToCloud()">☁ Save to Cloud</button>
     </div>
     <div class="panel-row">
       <span class="field-label">News date</span>
@@ -683,7 +684,38 @@ async function toggleBackendPanel() {
   if (open) {
     await loadStats();
     await loadEmailStatus();
+    await loadStorageStatus();
   }
+}
+
+async function loadStorageStatus() {
+  try {
+    const data = await (await adminFetch(API + "/api/admin/storage-status")).json();
+    const hint = document.getElementById("emailHint");
+    if (data.blob_configured && data.last_save_ok) {
+      hint.textContent = `☁ Cloud save OK (${Math.round((data.local_db_bytes || 0) / 1024)} KB in database)`;
+      hint.style.color = "#059669";
+    } else if (data.blob_configured) {
+      hint.textContent = data.hint || "Blob linked — click Save to Cloud after uploading/processing.";
+      hint.style.color = "#b45309";
+    } else {
+      hint.textContent = "⚠ Blob not configured — news may disappear overnight.";
+      hint.style.color = "#dc2626";
+    }
+  } catch (_) {}
+}
+
+async function saveToCloud() {
+  setBtnLoading("btnPersist", true);
+  setStatus("Saving database to Vercel Blob ...");
+  try {
+    const resp = await adminFetch(API + "/api/admin/persist-db", { method: "POST" });
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || data.message || "Cloud save failed");
+    setStatus(data.message || "Database saved to Vercel Blob.");
+    await loadStorageStatus();
+  } catch (e) { setStatus(e.message, true); }
+  finally { setBtnLoading("btnPersist", false); }
 }
 
 function getSelectedPubDate() {

@@ -8,3 +8,4 @@ fastapi
 uvicorn
 python-multipart
 pypdf
+vercel>=0.0.8
