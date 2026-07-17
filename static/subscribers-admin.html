@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subscribers — Redseer Insight Hour</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#eef1f8; --surface:#fff; --surface-2:#f8fafc; --border:#e2e8f0; --text:#0f172a;
+    --text-muted:#64748b; --primary:#1e3a5f; --accent:#ea580c; --teal:#0d9488; --teal-soft:#ecfdf5;
+    --danger:#dc2626; --success:#059669; --radius:14px; --font:"DM Sans",sans-serif;
+    --font-display:"Fraunces",Georgia,serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:var(--font); color:var(--text); background:var(--bg); }
+  .shell { max-width:1280px; margin:0 auto; padding:24px 20px 48px; }
+  .top { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; margin-bottom:24px; }
+  .brand { font-family:var(--font-display); font-size:1.75rem; color:var(--primary); margin:0; }
+  .brand em { font-style:normal; color:var(--accent); }
+  .sub { color:var(--text-muted); margin:6px 0 0; }
+  .btn { border:none; border-radius:10px; padding:10px 16px; font:inherit; font-weight:600; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
+  .btn-primary { background:var(--primary); color:#fff; }
+  .btn-ghost { background:#fff; color:var(--text); border:1px solid var(--border); }
+  .btn-teal { background:var(--teal); color:#fff; }
+  .btn-danger { background:#fef2f2; color:var(--danger); border:1px solid #fecaca; }
+  .btn-sm { padding:7px 12px; font-size:.85rem; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:14px; margin-bottom:24px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:18px; }
+  .card-label { font-size:.78rem; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); font-weight:600; }
+  .card-value { font-size:1.75rem; font-weight:700; margin-top:6px; color:var(--primary); }
+  .panel { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin-bottom:20px; }
+  .panel-title { font-size:.85rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); margin:0 0 14px; }
+  .filters { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .input, .select { border:1px solid var(--border); border-radius:10px; padding:10px 12px; font:inherit; background:#fff; min-width:180px; }
+  .chart-list { display:grid; gap:10px; }
+  .chart-row { display:grid; grid-template-columns:140px 1fr 40px; gap:12px; align-items:center; font-size:.9rem; }
+  .bar-wrap { background:var(--surface-2); border-radius:999px; height:10px; overflow:hidden; }
+  .bar { height:100%; background:linear-gradient(90deg,var(--teal),#14b8a6); border-radius:999px; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  th, td { padding:12px 10px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+  th { font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); background:var(--surface-2); }
+  .badge { display:inline-block; padding:3px 8px; border-radius:999px; font-size:.75rem; font-weight:600; }
+  .badge-active { background:var(--teal-soft); color:var(--teal); }
+  .badge-unsub { background:#fef2f2; color:var(--danger); }
+  .chip { display:inline-block; background:#f1f5f9; border-radius:999px; padding:2px 8px; margin:2px 4px 2px 0; font-size:.75rem; }
+  .table-wrap { overflow:auto; }
+  .modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.45); display:none; align-items:center; justify-content:center; padding:20px; z-index:50; }
+  .modal-backdrop.open { display:flex; }
+  .modal { background:#fff; border-radius:16px; width:min(560px,100%); max-height:90vh; overflow:auto; padding:24px; box-shadow:0 24px 48px rgba(15,23,42,.2); }
+  .modal h3 { margin:0 0 16px; }
+  .field { margin-bottom:14px; }
+  .field label { display:block; font-size:.82rem; font-weight:600; color:var(--text-muted); margin-bottom:6px; }
+  .sector-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:8px; }
+  .sector-option { display:flex; gap:8px; align-items:center; padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:.85rem; }
+  .toast { position:fixed; bottom:24px; right:24px; padding:14px 18px; border-radius:12px; color:#fff; font-weight:500; display:none; z-index:100; }
+  .toast.show { display:block; }
+  .toast.success { background:var(--success); }
+  .toast.error { background:var(--danger); }
+  .empty { text-align:center; padding:32px; color:var(--text-muted); }
+  @media (max-width:720px) {
+    .chart-row { grid-template-columns:1fr; }
+    th:nth-child(3), td:nth-child(3), th:nth-child(4), td:nth-child(4) { display:none; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="top">
+    <div>
+      <h1 class="brand">Subscribers <em>Admin</em></h1>
+      <p class="sub">Manage newsletter subscribers, sectors, and analytics.</p>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn btn-ghost" href="/">← Dashboard</a>
+      <button class="btn btn-teal" onclick="openEditModal()">+ Add subscriber</button>
+      <button class="btn btn-primary" onclick="exportCsv()">Export CSV</button>
+    </div>
+  </div>
+
+  <div class="cards" id="statCards"></div>
+
+  <div class="panel">
+    <p class="panel-title">Subscribers by sector</p>
+    <div class="chart-list" id="sectorChart"></div>
+  </div>
+
+  <div class="panel">
+    <p class="panel-title">All subscribers</p>
+    <div class="filters" style="margin-bottom:16px;">
+      <input class="input" id="searchInput" placeholder="Search name, email, company..." onkeydown="if(event.key==='Enter')loadSubscribers()">
+      <select class="select" id="sectorFilter"><option value="">All sectors</option></select>
+      <select class="select" id="statusFilter">
+        <option value="">All statuses</option>
+        <option value="subscribed">Subscribed</option>
+        <option value="unsubscribed">Unsubscribed</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="loadSubscribers()">Search</button>
+      <button class="btn btn-ghost btn-sm" onclick="clearFilters()">Clear</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th><th>Email</th><th>Company</th><th>Designation</th>
+            <th>Sectors</th><th>Status</th><th>Created</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="subscriberRows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="emptyState" style="display:none;">No subscribers found.</div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="editModal">
+  <div class="modal">
+    <h3 id="modalTitle">Edit subscriber</h3>
+    <div class="field"><label>Full name</label><input class="input" id="editName" style="width:100%"></div>
+    <div class="field"><label>Email</label><input class="input" id="editEmail" type="email" style="width:100%"></div>
+    <div class="field"><label>Company</label><input class="input" id="editCompany" style="width:100%"></div>
+    <div class="field"><label>Designation</label><input class="input" id="editDesignation" style="width:100%"></div>
+    <div class="field"><label>Status</label>
+      <select class="select" id="editStatus" style="width:100%">
+        <option value="subscribed">Subscribed</option>
+        <option value="unsubscribed">Unsubscribed</option>
+      </select>
+    </div>
+    <div class="field"><label>Sectors</label><div class="sector-grid" id="editSectorGrid"></div></div>
+    <div style="display:flex;gap:10px;margin-top:18px;">
+      <button class="btn btn-primary" id="btnSaveSub" onclick="saveSubscriber()">Save</button>
+      <button class="btn btn-ghost" onclick="closeEditModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script>
+const API = "";
+let adminPassword = sessionStorage.getItem("adminPassword") || "";
+let SECTORS = {};
+let subscribersCache = [];
+let editingId = null;
+
+function showToast(msg, isError=false) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = "toast show " + (isError ? "error" : "success");
+  setTimeout(() => el.className = "toast", 4000);
+}
+
+function adminHeaders(extra={}) {
+  const h = { ...extra };
+  if (adminPassword) h["X-Admin-Password"] = adminPassword;
+  return h;
+}
+
+async function adminFetch(url, opts={}) {
+  opts.headers = adminHeaders(opts.headers || {});
+  const resp = await fetch(url, opts);
+  if (resp.status === 401) {
+    adminPassword = prompt("Admin password:") || "";
+    if (adminPassword) sessionStorage.setItem("adminPassword", adminPassword);
+    opts.headers = adminHeaders(opts.headers || {});
+    return fetch(url, opts);
+  }
+  return resp;
+}
+
+async function ensureAdmin() {
+  const status = await (await fetch(API + "/api/admin/status")).json();
+  if (!status.protected) return true;
+  if (adminPassword) return true;
+  adminPassword = prompt("Admin password:") || "";
+  if (!adminPassword) return false;
+  sessionStorage.setItem("adminPassword", adminPassword);
+  const verify = await adminFetch(API + "/api/admin/verify", { method: "POST" });
+  if (!verify.ok) { adminPassword = ""; sessionStorage.removeItem("adminPassword"); return false; }
+  return true;
+}
+
+function buildSectorFilters() {
+  const sel = document.getElementById("sectorFilter");
+  sel.innerHTML = '<option value="">All sectors</option>';
+  for (const [key, label] of Object.entries(SECTORS)) {
+    const opt = document.createElement("option");
+    opt.value = key; opt.textContent = label; sel.appendChild(opt);
+  }
+}
+
+function buildEditSectorGrid(selected=[]) {
+  const grid = document.getElementById("editSectorGrid");
+  grid.innerHTML = "";
+  for (const [key, label] of Object.entries(SECTORS)) {
+    const wrap = document.createElement("label");
+    wrap.className = "sector-option";
+    wrap.innerHTML = `<input type="checkbox" value="${key}" ${selected.includes(key)?"checked":""}><span>${label}</span>`;
+    grid.appendChild(wrap);
+  }
+}
+
+function renderAnalytics(data) {
+  document.getElementById("statCards").innerHTML = `
+    <div class="card"><div class="card-label">Total</div><div class="card-value">${data.total}</div></div>
+    <div class="card"><div class="card-label">Active</div><div class="card-value">${data.active}</div></div>
+    <div class="card"><div class="card-label">Unsubscribed</div><div class="card-value">${data.unsubscribed}</div></div>
+    <div class="card"><div class="card-label">New this week</div><div class="card-value">${data.new_this_week}</div></div>
+    <div class="card"><div class="card-label">New this month</div><div class="card-value">${data.new_this_month}</div></div>`;
+  const max = Math.max(1, ...(data.by_sector || []).map(x => x.count));
+  document.getElementById("sectorChart").innerHTML = (data.by_sector || []).map(item => `
+    <div class="chart-row">
+      <div>${item.label}</div>
+      <div class="bar-wrap"><div class="bar" style="width:${Math.round(item.count/max*100)}%"></div></div>
+      <div style="font-weight:700;text-align:right;">${item.count}</div>
+    </div>`).join("");
+}
+
+function renderTable(rows) {
+  subscribersCache = rows;
+  const tbody = document.getElementById("subscriberRows");
+  document.getElementById("emptyState").style.display = rows.length ? "none" : "block";
+  tbody.innerHTML = rows.map(row => `
+    <tr>
+      <td><strong>${esc(row.name)}</strong></td>
+      <td>${esc(row.email)}</td>
+      <td>${esc(row.company || "—")}</td>
+      <td>${esc(row.designation || "—")}</td>
+      <td>${(row.sectors||[]).map(s => `<span class="chip">${esc(SECTORS[s]||s)}</span>`).join("")}</td>
+      <td><span class="badge ${row.status==='subscribed'?'badge-active':'badge-unsub'}">${row.status}</span></td>
+      <td>${(row.created_at||"").slice(0,10)}</td>
+      <td>
+        <button class="btn btn-ghost btn-sm" onclick="openEditModal(${row.id})">Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteSubscriber(${row.id})">Delete</button>
+      </td>
+    </tr>`).join("");
+}
+
+function esc(s) {
+  return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
+}
+
+async function loadAnalytics() {
+  const data = await (await adminFetch(API + "/api/admin/subscribers/analytics")).json();
+  renderAnalytics(data);
+}
+
+async function loadSubscribers() {
+  const params = new URLSearchParams();
+  const search = document.getElementById("searchInput").value.trim();
+  const sector = document.getElementById("sectorFilter").value;
+  const status = document.getElementById("statusFilter").value;
+  if (search) params.set("search", search);
+  if (sector) params.set("sector", sector);
+  if (status) params.set("status", status);
+  const resp = await adminFetch(API + "/api/admin/subscribers?" + params.toString());
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.detail || "Failed to load subscribers");
+  renderTable(data.subscribers || []);
+}
+
+function clearFilters() {
+  document.getElementById("searchInput").value = "";
+  document.getElementById("sectorFilter").value = "";
+  document.getElementById("statusFilter").value = "";
+  loadSubscribers();
+}
+
+function openEditModal(id=null) {
+  editingId = id;
+  document.getElementById("modalTitle").textContent = id ? "Edit subscriber" : "Add subscriber";
+  if (id) {
+    const row = subscribersCache.find(r => r.id === id);
+    if (!row) return;
+    document.getElementById("editName").value = row.name;
+    document.getElementById("editEmail").value = row.email;
+    document.getElementById("editCompany").value = row.company || "";
+    document.getElementById("editDesignation").value = row.designation || "";
+    document.getElementById("editStatus").value = row.status;
+    buildEditSectorGrid(row.sectors || []);
+  } else {
+    document.getElementById("editName").value = "";
+    document.getElementById("editEmail").value = "";
+    document.getElementById("editCompany").value = "";
+    document.getElementById("editDesignation").value = "";
+    document.getElementById("editStatus").value = "subscribed";
+    buildEditSectorGrid([]);
+  }
+  document.getElementById("editModal").classList.add("open");
+}
+
+function closeEditModal() {
+  document.getElementById("editModal").classList.remove("open");
+  editingId = null;
+}
+
+function editSelectedSectors() {
+  return [...document.querySelectorAll("#editSectorGrid input:checked")].map(el => el.value);
+}
+
+async function saveSubscriber() {
+  const payload = {
+    name: document.getElementById("editName").value.trim(),
+    email: document.getElementById("editEmail").value.trim(),
+    company: document.getElementById("editCompany").value.trim(),
+    designation: document.getElementById("editDesignation").value.trim(),
+    status: document.getElementById("editStatus").value,
+    sectors: editSelectedSectors(),
+  };
+  if (!payload.name || !payload.email || !payload.sectors.length) {
+    showToast("Name, email, and at least one sector are required.", true); return;
+  }
+  document.getElementById("btnSaveSub").disabled = true;
+  try {
+    const url = editingId ? `${API}/api/admin/subscribers/${editingId}` : `${API}/api/admin/subscribers`;
+    const resp = await adminFetch(url, {
+      method: editingId ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Save failed");
+    showToast(editingId ? "Subscriber updated." : "Subscriber added.");
+    closeEditModal();
+    await loadSubscribers();
+    await loadAnalytics();
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    document.getElementById("btnSaveSub").disabled = false;
+  }
+}
+
+async function deleteSubscriber(id) {
+  if (!confirm("Delete this subscriber permanently?")) return;
+  try {
+    const resp = await adminFetch(`${API}/api/admin/subscribers/${id}`, { method: "DELETE" });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Delete failed");
+    showToast("Subscriber deleted.");
+    await loadSubscribers();
+    await loadAnalytics();
+  } catch (e) {
+    showToast(e.message, true);
+  }
+}
+
+async function exportCsv() {
+  const params = new URLSearchParams();
+  const search = document.getElementById("searchInput").value.trim();
+  const sector = document.getElementById("sectorFilter").value;
+  const status = document.getElementById("statusFilter").value;
+  if (search) params.set("search", search);
+  if (sector) params.set("sector", sector);
+  if (status) params.set("status", status);
+  const resp = await adminFetch(API + "/api/admin/subscribers/export?" + params.toString());
+  if (!resp.ok) { showToast("Export failed.", true); return; }
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "subscribers.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function init() {
+  if (!(await ensureAdmin())) {
+    document.body.innerHTML = "<div class='shell'><div class='panel'>Admin access required.</div></div>";
+    return;
+  }
+  SECTORS = await (await fetch(API + "/api/sectors")).json();
+  buildSectorFilters();
+  await loadAnalytics();
+  await loadSubscribers();
+}
+
+init();
+</script>
+</body>
+</html>

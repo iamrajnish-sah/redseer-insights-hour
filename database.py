@@ -116,6 +116,11 @@ def init_db():
             )
         except sqlite3.OperationalError:
             pass
+        try:
+            from subscribers import init_subscriber_tables
+            init_subscriber_tables(conn)
+        except Exception as exc:
+            print(f"  [warning] subscriber tables init failed: {exc}")
 
 
 def _normalize_newspaper_sources(conn):

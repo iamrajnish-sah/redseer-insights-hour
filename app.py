@@ -20,8 +20,8 @@ import smtplib
 import tempfile
 from datetime import date
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Header
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Header, Request, Query
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import database
@@ -32,6 +32,7 @@ import gnews_ingest
 import classify_and_summarize
 import dedupe
 import email_digest
+import subscribers
 import admin_auth
 import auto_refresh
 from db_persist import restore_db, save_db, storage_status, enabled
@@ -72,6 +73,22 @@ def serve_index():
     )
 
 
+@app.get("/preferences")
+def serve_preferences():
+    return FileResponse(
+        os.path.join(STATIC_DIR, "preferences.html"),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
+@app.get("/admin/subscribers")
+def serve_subscribers_admin():
+    return FileResponse(
+        os.path.join(STATIC_DIR, "subscribers-admin.html"),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
 @app.get("/api/sectors")
 def get_sectors():
     return SECTOR_LABELS
@@ -100,14 +117,214 @@ def get_stats(_: None = Depends(admin_auth.require_admin)):
 
 @app.get("/api/email-status")
 def email_status(_: None = Depends(admin_auth.require_admin)):
-    recipients = email_digest.load_recipients()
+    summary = email_digest.email_recipient_summary()
     return {
         "smtp_configured": email_digest.smtp_configured(),
         "product_name": email_digest.PRODUCT_NAME,
-        "sectors_with_recipients": {
-            SECTOR_LABELS.get(k, k): len(v) for k, v in recipients.items() if v
+        "subscriber_mode": summary["subscriber_mode"],
+        "active_subscribers": summary["active_subscribers"],
+        "sectors_with_subscribers": summary["sectors_with_subscribers"],
+        "legacy_sectors_with_recipients": summary["legacy_sectors_with_recipients"],
+        "sectors_with_recipients": (
+            summary["sectors_with_subscribers"]
+            if summary["subscriber_mode"]
+            else summary["legacy_sectors_with_recipients"]
+        ),
+    }
+
+
+@app.post("/api/subscribe")
+async def api_subscribe(request: Request):
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "Invalid JSON body") from exc
+    try:
+        subscriber, created = subscribers.subscribe(
+            name=body.get("name"),
+            email=body.get("email"),
+            company=body.get("company"),
+            designation=body.get("designation"),
+            sectors=body.get("sectors") or [],
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "ok": True,
+        "created": created,
+        "message": (
+            "You're subscribed! You'll receive sector news by email."
+            if created
+            else "Your subscription has been updated."
+        ),
+        "subscriber": {
+            "id": subscriber["id"],
+            "name": subscriber["name"],
+            "email": subscriber["email"],
+            "sectors": subscriber["sectors"],
+            "status": subscriber["status"],
         },
     }
+
+
+@app.get("/api/subscribers/by-token/{token}")
+def api_subscriber_by_token(token: str):
+    subscriber = subscribers.get_subscriber_by_token(token)
+    if not subscriber:
+        raise HTTPException(404, "Invalid or expired link")
+    return {
+        "id": subscriber["id"],
+        "name": subscriber["name"],
+        "email": subscriber["email"],
+        "company": subscriber.get("company"),
+        "designation": subscriber.get("designation"),
+        "sectors": subscriber["sectors"],
+        "status": subscriber["status"],
+    }
+
+
+@app.put("/api/subscribers/preferences")
+async def api_update_preferences(request: Request):
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "Invalid JSON body") from exc
+    token = (body.get("token") or "").strip()
+    if not token:
+        raise HTTPException(400, "Token is required")
+    try:
+        subscriber = subscribers.update_preferences_by_token(token, body.get("sectors") or [])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "ok": True,
+        "message": "Your preferences have been updated.",
+        "subscriber": {
+            "id": subscriber["id"],
+            "name": subscriber["name"],
+            "email": subscriber["email"],
+            "sectors": subscriber["sectors"],
+            "status": subscriber["status"],
+        },
+    }
+
+
+@app.get("/api/unsubscribe")
+def api_unsubscribe(token: str = Query(...)):
+    try:
+        subscriber = subscribers.unsubscribe_by_token(token)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    html = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unsubscribed — Redseer Insight Hour</title>
+<style>
+body {{ font-family: Arial, sans-serif; background:#f1f5f9; margin:0; padding:40px 16px; }}
+.card {{ max-width:520px; margin:0 auto; background:#fff; border-radius:14px; padding:32px; box-shadow:0 8px 24px rgba(15,23,42,.08); }}
+h1 {{ margin:0 0 12px; color:#1e3a5f; font-size:1.5rem; }}
+p {{ color:#475569; line-height:1.6; }}
+a {{ color:#0d9488; }}
+</style></head><body><div class="card">
+<h1>You've been unsubscribed</h1>
+<p>{subscriber['email']} will no longer receive {email_digest.PRODUCT_NAME} emails.</p>
+<p>Changed your mind? <a href="/preferences?token={token}">Manage preferences</a> or <a href="/">return to the dashboard</a>.</p>
+</div></body></html>"""
+    return HTMLResponse(html)
+
+
+@app.get("/api/admin/subscribers")
+def admin_list_subscribers(
+    search: str = None,
+    sector: str = None,
+    status: str = None,
+    _: None = Depends(admin_auth.require_admin),
+):
+    try:
+        rows = subscribers.list_subscribers(search=search, sector=sector, status=status)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"subscribers": rows, "count": len(rows)}
+
+
+@app.get("/api/admin/subscribers/analytics")
+def admin_subscriber_analytics(_: None = Depends(admin_auth.require_admin)):
+    return subscribers.get_analytics()
+
+
+@app.get("/api/admin/subscribers/export")
+def admin_export_subscribers(
+    search: str = None,
+    sector: str = None,
+    status: str = None,
+    _: None = Depends(admin_auth.require_admin),
+):
+    try:
+        csv_data = subscribers.export_csv(search=search, sector=sector, status=status)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    filename = f"subscribers-{date.today()}.csv"
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/admin/subscribers")
+async def admin_create_subscriber(request: Request, _: None = Depends(admin_auth.require_admin)):
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "Invalid JSON body") from exc
+    try:
+        subscriber, _ = subscribers.subscribe(
+            name=body.get("name"),
+            email=body.get("email"),
+            company=body.get("company"),
+            designation=body.get("designation"),
+            sectors=body.get("sectors") or [],
+        )
+        if body.get("status") == subscribers.STATUS_UNSUBSCRIBED:
+            subscriber = subscribers.update_subscriber(
+                subscriber["id"], status=subscribers.STATUS_UNSUBSCRIBED
+            )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "subscriber": subscriber}
+
+
+@app.put("/api/admin/subscribers/{subscriber_id}")
+async def admin_update_subscriber(
+    subscriber_id: int,
+    request: Request,
+    _: None = Depends(admin_auth.require_admin),
+):
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "Invalid JSON body") from exc
+    try:
+        subscriber = subscribers.update_subscriber(
+            subscriber_id,
+            name=body.get("name"),
+            email=body.get("email"),
+            company=body.get("company"),
+            designation=body.get("designation"),
+            status=body.get("status"),
+            sectors=body.get("sectors"),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "subscriber": subscriber}
+
+
+@app.delete("/api/admin/subscribers/{subscriber_id}")
+def admin_delete_subscriber(subscriber_id: int, _: None = Depends(admin_auth.require_admin)):
+    try:
+        subscribers.delete_subscriber(subscriber_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"ok": True, "message": "Subscriber deleted."}
 
 
 @app.get("/api/articles")
@@ -506,24 +723,52 @@ def dedupe_all(_: None = Depends(admin_auth.require_admin)):
 
 
 @app.post("/api/send-email")
-def send_email_digest(pub_date: str = None, _: None = Depends(admin_auth.require_admin)):
-    """Send each sector's news to that sector's email list for the given date."""
+async def send_email_digest(
+    request: Request,
+    pub_date: str = None,
+    _: None = Depends(admin_auth.require_admin),
+):
+    """Send digest emails to active subscribers for selected sector(s)."""
     if not pub_date:
         pub_date = str(date.today())
+
+    sectors = None
     try:
-        results = email_digest.send_sector_digests(pub_date)
+        body = await request.json()
+        sectors = body.get("sectors")
+    except Exception:
+        sectors = None
+
+    try:
+        payload = email_digest.send_sector_digests(pub_date, sectors=sectors)
     except RuntimeError as e:
         raise HTTPException(400, str(e))
     except smtplib.SMTPException as e:
         raise HTTPException(500, f"Email failed: {e}")
 
-    sent = [r for r in results if r["status"] == "sent"]
-    skipped = [r for r in results if r["status"] == "skipped"]
+    mode = payload.get("mode", "legacy")
+    if mode == "subscribers":
+        sent = [r for r in payload.get("results", []) if r.get("status") == "sent"]
+        skipped = [r for r in payload.get("results", []) if r.get("status") == "skipped"]
+        return {
+            "pub_date": pub_date,
+            "mode": mode,
+            "sent_count": len(sent),
+            "skipped_count": len(skipped),
+            "sectors": payload.get("sectors", []),
+            "results": payload.get("results", []),
+            "message": f"Sent {len(sent)} email(s) to subscribers for {pub_date}.",
+        }
+
+    sent = [r for r in payload.get("results", []) if r.get("status") == "sent"]
+    skipped = [r for r in payload.get("results", []) if r.get("status") == "skipped"]
     return {
         "pub_date": pub_date,
+        "mode": mode,
         "sent_count": len(sent),
         "skipped_count": len(skipped),
-        "results": results,
+        "sectors": payload.get("sectors", []),
+        "results": payload.get("results", []),
         "message": f"Sent {len(sent)} sector email(s) for {pub_date}.",
     }
 

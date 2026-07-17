@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manage Preferences — Redseer Insight Hour</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#eef1f8; --surface:#fff; --border:#e2e8f0; --text:#0f172a; --text-muted:#64748b;
+    --primary:#1e3a5f; --accent:#ea580c; --teal:#0d9488; --teal-soft:#ecfdf5;
+    --danger:#dc2626; --success:#059669; --radius:14px; --font:"DM Sans",sans-serif;
+    --font-display:"Fraunces",Georgia,serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; font-family:var(--font); color:var(--text);
+    background:radial-gradient(ellipse 80% 50% at 50% -20%, rgba(234,88,12,.08), transparent), var(--bg); }
+  .shell { max-width:640px; margin:0 auto; padding:32px 20px 48px; }
+  .brand { font-family:var(--font-display); font-size:1.5rem; color:var(--primary); margin:0 0 8px; }
+  .brand em { font-style:normal; color:var(--accent); }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:28px; box-shadow:0 8px 24px rgba(15,23,42,.08); }
+  h2 { margin:0 0 8px; font-size:1.25rem; }
+  .sub { color:var(--text-muted); margin:0 0 24px; font-size:.95rem; }
+  .field { margin-bottom:16px; }
+  label { display:block; font-size:.85rem; font-weight:600; margin-bottom:6px; color:var(--text-muted); }
+  .readonly { padding:12px 14px; background:#f8fafc; border:1px solid var(--border); border-radius:10px; }
+  .sector-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; margin-top:8px; }
+  .sector-option { display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; cursor:pointer; transition:.15s; }
+  .sector-option:hover { border-color:#cbd5e1; background:#f8fafc; }
+  .sector-option input { accent-color:var(--teal); }
+  .btn-row { display:flex; gap:10px; flex-wrap:wrap; margin-top:24px; }
+  .btn { border:none; border-radius:10px; padding:12px 18px; font:inherit; font-weight:600; cursor:pointer; }
+  .btn-primary { background:var(--primary); color:#fff; }
+  .btn-ghost { background:#fff; color:var(--text); border:1px solid var(--border); }
+  .btn-danger { background:#fef2f2; color:var(--danger); border:1px solid #fecaca; }
+  .btn:disabled { opacity:.6; cursor:not-allowed; }
+  .toast { position:fixed; bottom:24px; right:24px; max-width:360px; padding:14px 18px; border-radius:12px; color:#fff; font-weight:500; box-shadow:0 12px 32px rgba(15,23,42,.18); z-index:100; display:none; }
+  .toast.show { display:block; animation:slideUp .25s ease; }
+  .toast.success { background:var(--success); }
+  .toast.error { background:var(--danger); }
+  @keyframes slideUp { from { transform:translateY(12px); opacity:0; } to { transform:none; opacity:1; } }
+  .loading { text-align:center; padding:48px 0; color:var(--text-muted); }
+  .error-box { background:#fef2f2; color:var(--danger); border:1px solid #fecaca; border-radius:10px; padding:16px; }
+  a { color:var(--teal); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <h1 class="brand">Redseer <em>Insight Hour</em></h1>
+  <div class="card" id="mainCard">
+    <div class="loading" id="loadingState">Loading your preferences...</div>
+    <div id="formState" style="display:none;">
+      <h2>Manage email preferences</h2>
+      <p class="sub" id="welcomeText"></p>
+      <div class="field">
+        <label>Email address</label>
+        <div class="readonly" id="emailDisplay"></div>
+      </div>
+      <div class="field">
+        <label>Sectors you follow</label>
+        <div class="sector-grid" id="sectorGrid"></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btnSave" onclick="savePreferences()">Save preferences</button>
+        <button class="btn btn-danger" id="btnUnsub" onclick="unsubscribeNow()">Unsubscribe</button>
+        <a class="btn btn-ghost" href="/" style="text-decoration:none;display:inline-flex;align-items:center;">Back to dashboard</a>
+      </div>
+    </div>
+    <div id="errorState" style="display:none;" class="error-box"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const API = "";
+const params = new URLSearchParams(window.location.search);
+const token = params.get("token");
+let SECTORS = {};
+let currentSubscriber = null;
+
+function showToast(msg, isError=false) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = "toast show " + (isError ? "error" : "success");
+  setTimeout(() => { el.className = "toast"; }, 4000);
+}
+
+function buildSectorGrid(selected=[]) {
+  const grid = document.getElementById("sectorGrid");
+  grid.innerHTML = "";
+  for (const [key, label] of Object.entries(SECTORS)) {
+    const id = "sector-" + key;
+    const wrap = document.createElement("label");
+    wrap.className = "sector-option";
+    wrap.innerHTML = `<input type="checkbox" id="${id}" value="${key}" ${selected.includes(key) ? "checked" : ""}><span>${label}</span>`;
+    grid.appendChild(wrap);
+  }
+}
+
+function selectedSectors() {
+  return [...document.querySelectorAll("#sectorGrid input:checked")].map(el => el.value);
+}
+
+async function loadData() {
+  if (!token) {
+    document.getElementById("loadingState").style.display = "none";
+    document.getElementById("errorState").style.display = "block";
+    document.getElementById("errorState").textContent = "Invalid link — missing token.";
+    return;
+  }
+  try {
+    SECTORS = await (await fetch(API + "/api/sectors")).json();
+    const resp = await fetch(API + "/api/subscribers/by-token/" + encodeURIComponent(token));
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Invalid link");
+    currentSubscriber = data;
+    document.getElementById("loadingState").style.display = "none";
+    document.getElementById("formState").style.display = "block";
+    document.getElementById("welcomeText").textContent = `Hi ${data.name}, choose which sectors you want in your inbox.`;
+    document.getElementById("emailDisplay").textContent = data.email;
+    buildSectorGrid(data.sectors || []);
+    if (params.get("action") === "unsubscribe") unsubscribeNow(true);
+  } catch (e) {
+    document.getElementById("loadingState").style.display = "none";
+    document.getElementById("errorState").style.display = "block";
+    document.getElementById("errorState").textContent = e.message;
+  }
+}
+
+async function savePreferences() {
+  const sectors = selectedSectors();
+  if (!sectors.length) { showToast("Select at least one sector.", true); return; }
+  document.getElementById("btnSave").disabled = true;
+  try {
+    const resp = await fetch(API + "/api/subscribers/preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, sectors }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Update failed");
+    showToast(data.message || "Preferences saved.");
+    currentSubscriber = data.subscriber;
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    document.getElementById("btnSave").disabled = false;
+  }
+}
+
+async function unsubscribeNow(silent=false) {
+  if (!silent && !confirm("Unsubscribe from all Redseer Insight Hour emails?")) return;
+  document.getElementById("btnUnsub").disabled = true;
+  try {
+    const resp = await fetch(API + "/api/unsubscribe?token=" + encodeURIComponent(token));
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data.detail || "Unsubscribe failed");
+    }
+    if (silent) {
+      document.getElementById("formState").innerHTML = "<h2>You've been unsubscribed</h2><p class='sub'>You will no longer receive emails. <a href='/'>Return to dashboard</a></p>";
+    } else {
+      window.location.href = API + "/api/unsubscribe?token=" + encodeURIComponent(token);
+    }
+  } catch (e) {
+    showToast(e.message, true);
+    document.getElementById("btnUnsub").disabled = false;
+  }
+}
+
+loadData();
+</script>
+</body>
+</html>

@@ -60,6 +60,12 @@
     padding: 28px 0 20px;
     flex-wrap: wrap;
   }
+  .topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
   .brand-block { display: flex; flex-direction: column; gap: 6px; }
   .brand {
     font-family: var(--font-display);
@@ -271,6 +277,102 @@
     color: var(--danger);
     background: #fef2f2;
     border-color: #fecaca;
+  }
+
+  /* ── Floating toast ── */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    max-width: 380px;
+    padding: 14px 18px;
+    border-radius: 12px;
+    color: #fff;
+    font-weight: 600;
+    box-shadow: var(--shadow-lg);
+    z-index: 2000;
+    display: none;
+  }
+  .toast.show { display: block; animation: toastIn .25s ease; }
+  .toast.success { background: var(--success); }
+  .toast.error { background: var(--danger); }
+  @keyframes toastIn {
+    from { transform: translateY(12px); opacity: 0; }
+    to { transform: none; opacity: 1; }
+  }
+
+  /* ── Modal ── */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 1500;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    width: min(560px, 100%);
+    max-height: 90vh;
+    overflow: auto;
+    background: var(--surface);
+    border-radius: 16px;
+    padding: 28px;
+    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--border);
+  }
+  .modal h2 {
+    margin: 0 0 8px;
+    font-family: var(--font-display);
+    color: var(--primary);
+    font-size: 1.35rem;
+  }
+  .modal-sub {
+    margin: 0 0 20px;
+    color: var(--text-muted);
+    font-size: .92rem;
+  }
+  .form-field { margin-bottom: 14px; }
+  .form-field label {
+    display: block;
+    font-size: .82rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .form-input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 13px;
+    font: inherit;
+    background: #fff;
+  }
+  .sector-check-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .sector-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: .88rem;
+  }
+  .sector-check:hover { background: var(--surface-2); }
+  .sector-check input { accent-color: var(--teal); }
+  .modal-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 20px;
   }
 
   /* ── Sector tabs ── */
@@ -669,7 +771,10 @@
       <h1 class="brand">Redseer <em>Insight Hour</em></h1>
       <p class="brand-tagline">Daily sector intelligence for India — curated news delivered to the right team.</p>
     </div>
-    <div class="date-pill" id="todayDate"></div>
+    <div class="topbar-actions">
+      <button type="button" class="btn btn-teal" onclick="openSubscribeModal()">✉ Subscribe</button>
+      <div class="date-pill" id="todayDate"></div>
+    </div>
   </header>
 
   <div class="backend-toggle-row">
@@ -694,7 +799,8 @@
       <button class="btn btn-ghost" id="btnGNews" onclick="refreshGNews()">↻ Refresh GNews</button>
       <button class="btn btn-primary" id="btnRefreshAll" onclick="refreshAllSources()">↻ Refresh All Sources</button>
       <button class="btn btn-teal" id="btnGemini" onclick="processArticles()">✦ Process with Gemini</button>
-      <button class="btn btn-email" id="btnEmail" onclick="sendSectorEmails()">✉ Send Email</button>
+      <button class="btn btn-email" id="btnEmail" onclick="openEmailCampaignModal()">✉ Send Email</button>
+      <a class="btn btn-ghost btn-sm" href="/admin/subscribers">👥 Subscribers</a>
       <button class="btn btn-ghost btn-sm" id="btnRefilterRh" onclick="refilterRideHailing()">↺ Refilter ride hailing</button>
       <button class="btn btn-ghost btn-sm" id="btnDedupe" onclick="removeDuplicates()">↺ Remove duplicates</button>
       <button class="btn btn-ghost btn-sm" id="btnPersist" onclick="saveToCloud()">☁ Save to Cloud</button>
@@ -737,6 +843,54 @@
     </div>
   </main>
 
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal-backdrop" id="subscribeModal" onclick="if(event.target===this)closeSubscribeModal()">
+  <div class="modal" role="dialog" aria-labelledby="subscribeTitle">
+    <h2 id="subscribeTitle">Subscribe to sector news</h2>
+    <p class="modal-sub">Get daily India sector intelligence in your inbox. Choose the sectors you care about.</p>
+    <div class="form-field">
+      <label for="subName">Full name *</label>
+      <input class="form-input" id="subName" type="text" placeholder="Your name" required>
+    </div>
+    <div class="form-field">
+      <label for="subEmail">Email address *</label>
+      <input class="form-input" id="subEmail" type="email" placeholder="you@company.com" required>
+    </div>
+    <div class="form-field">
+      <label for="subCompany">Company</label>
+      <input class="form-input" id="subCompany" type="text" placeholder="Optional">
+    </div>
+    <div class="form-field">
+      <label for="subDesignation">Designation</label>
+      <input class="form-input" id="subDesignation" type="text" placeholder="Optional">
+    </div>
+    <div class="form-field">
+      <label>Sectors *</label>
+      <div class="sector-check-grid" id="subscribeSectorGrid"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btnSubscribeSubmit" onclick="submitSubscribe()">Subscribe</button>
+      <button class="btn btn-ghost" type="button" onclick="closeSubscribeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="emailCampaignModal" onclick="if(event.target===this)closeEmailCampaignModal()">
+  <div class="modal" role="dialog" aria-labelledby="emailCampaignTitle">
+    <h2 id="emailCampaignTitle">Send email campaign</h2>
+    <p class="modal-sub">Active subscribers who follow any selected sector will receive one email each.</p>
+    <div class="form-field">
+      <label>Select sector(s) *</label>
+      <div class="sector-check-grid" id="emailSectorGrid"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-email" id="btnEmailSend" onclick="sendSectorEmails()">Send emails</button>
+      <button class="btn btn-ghost" type="button" onclick="closeEmailCampaignModal()">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -1062,10 +1216,15 @@ async function loadEmailStatus() {
       hint.style.color = "var(--danger)";
       return;
     }
+    if (data.subscriber_mode) {
+      hint.textContent = `Email ready · ${data.active_subscribers || 0} active subscriber(s)`;
+      hint.style.color = "var(--success)";
+      return;
+    }
     const count = Object.keys(data.sectors_with_recipients || {}).length;
     hint.textContent = count
-      ? `Email ready · ${count} sector team(s) configured`
-      : "Email: add addresses to sector_recipients.json";
+      ? `Email ready · ${count} legacy sector list(s) configured`
+      : "Email: add subscribers or sector_recipients.json";
     hint.style.color = count ? "var(--success)" : "var(--accent)";
   } catch (_) {}
 }
@@ -1162,24 +1321,44 @@ async function loadArticles() {
 
 async function sendSectorEmails() {
   const pubDate = getSelectedPubDate();
+  const sectors = getCheckedSectors("emailSectorGrid");
+  if (!sectors.length) {
+    showToast("Select at least one sector.", true);
+    return;
+  }
   const dateLabel = document.getElementById("dateFilter").value
     ? pubDate
     : `${pubDate} (today — pick a date in calendar to send for another day)`;
-  if (!confirm(`Send sector emails for ${dateLabel}?\n\nEach team gets ONLY their sector's news.`)) return;
+  if (!confirm(`Send emails for ${dateLabel} to subscribers in:\n${sectors.map(s => SECTORS[s] || s).join(", ")}?`)) return;
 
-  setBtnLoading("btnEmail", true);
-  setStatus("Sending sector emails ...");
+  setBtnLoading("btnEmailSend", true);
+  setStatus("Sending emails to subscribers ...");
   try {
-    const resp = await adminFetch(API + `/api/send-email?pub_date=${encodeURIComponent(pubDate)}`, { method: "POST" });
+    const resp = await adminFetch(API + `/api/send-email?pub_date=${encodeURIComponent(pubDate)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sectors }),
+    });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || "Email send failed");
-    const sent = (data.results || []).filter(r => r.status === "sent");
-    const detail = sent.map(r => `${r.sector_label}: ${r.articles} articles → ${r.recipients.length} recipient(s)`).join(" · ");
-    setStatus(`${data.message} ${detail}`);
+    if (data.mode === "subscribers") {
+      const sent = (data.results || []).filter(r => r.status === "sent");
+      const detail = sent.map(r => `${r.email}: ${r.articles} articles`).slice(0, 3).join(" · ");
+      const suffix = sent.length > 3 ? ` · +${sent.length - 3} more` : "";
+      setStatus(`${data.message} ${detail}${suffix}`);
+      showToast(data.message || "Emails sent.");
+    } else {
+      const sent = (data.results || []).filter(r => r.status === "sent");
+      const detail = sent.map(r => `${r.sector_label}: ${r.articles} articles → ${(r.recipients || []).length} recipient(s)`).join(" · ");
+      setStatus(`${data.message} ${detail}`);
+      showToast(data.message || "Emails sent.");
+    }
+    closeEmailCampaignModal();
   } catch (e) {
     setStatus(e.message, true);
+    showToast(e.message, true);
   } finally {
-    setBtnLoading("btnEmail", false);
+    setBtnLoading("btnEmailSend", false);
   }
 }
 
@@ -1330,6 +1509,88 @@ function setStatus(msg, isError=false) {
   const el = document.getElementById("statusMsg");
   el.textContent = msg;
   el.classList.toggle("error", isError);
+}
+
+function showToast(msg, isError=false) {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.className = "toast show " + (isError ? "error" : "success");
+  setTimeout(() => { el.className = "toast"; }, 4000);
+}
+
+function buildSectorCheckGrid(containerId, selected=[]) {
+  const grid = document.getElementById(containerId);
+  if (!grid) return;
+  grid.innerHTML = "";
+  for (const [key, label] of Object.entries(SECTORS)) {
+    const wrap = document.createElement("label");
+    wrap.className = "sector-check";
+    wrap.innerHTML = `<input type="checkbox" value="${key}" ${selected.includes(key) ? "checked" : ""}><span>${label}</span>`;
+    grid.appendChild(wrap);
+  }
+}
+
+function getCheckedSectors(containerId) {
+  return [...document.querySelectorAll(`#${containerId} input:checked`)].map(el => el.value);
+}
+
+function openSubscribeModal() {
+  buildSectorCheckGrid("subscribeSectorGrid");
+  document.getElementById("subscribeModal").classList.add("open");
+}
+
+function closeSubscribeModal() {
+  document.getElementById("subscribeModal").classList.remove("open");
+}
+
+async function submitSubscribe() {
+  const payload = {
+    name: document.getElementById("subName").value.trim(),
+    email: document.getElementById("subEmail").value.trim(),
+    company: document.getElementById("subCompany").value.trim(),
+    designation: document.getElementById("subDesignation").value.trim(),
+    sectors: getCheckedSectors("subscribeSectorGrid"),
+  };
+  if (!payload.name || !payload.email) {
+    showToast("Name and email are required.", true);
+    return;
+  }
+  if (!payload.sectors.length) {
+    showToast("Select at least one sector.", true);
+    return;
+  }
+  setBtnLoading("btnSubscribeSubmit", true);
+  try {
+    const resp = await fetch(API + "/api/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Subscription failed");
+    showToast(data.message || "Subscribed successfully!");
+    closeSubscribeModal();
+    document.getElementById("subName").value = "";
+    document.getElementById("subEmail").value = "";
+    document.getElementById("subCompany").value = "";
+    document.getElementById("subDesignation").value = "";
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    setBtnLoading("btnSubscribeSubmit", false);
+  }
+}
+
+async function openEmailCampaignModal() {
+  const ok = await ensureAdminAccess();
+  if (!ok) return;
+  buildSectorCheckGrid("emailSectorGrid", Object.keys(SECTORS));
+  document.getElementById("emailCampaignModal").classList.add("open");
+}
+
+function closeEmailCampaignModal() {
+  document.getElementById("emailCampaignModal").classList.remove("open");
 }
 
 function setBtnLoading(id, loading) {
