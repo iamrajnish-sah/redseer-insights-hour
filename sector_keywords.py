@@ -9,7 +9,7 @@ semantically instead of by plain keyword lookup.
 
 import re
 
-from sector_taxonomies import TAXONOMIES, taxonomy_matches
+from sector_taxonomies import TAXONOMIES, best_taxonomy_sector
 
 SECTOR_LABELS = {
     "e_commerce": "E-commerce",
@@ -20,6 +20,7 @@ SECTOR_LABELS = {
     "fashion": "Fashion",
     "bpc": "BPC",
     "e_logistics": "E-Logistics",
+    "fintech": "Fintech",
     "mobile_electronics": "Mobile & Electronics",
     "cross_sector": "Cross-Sector / Indirect",
 }
@@ -202,12 +203,8 @@ SECTOR_KEYWORDS = {
         "xpressbees", "porter", "elasticrun", "loadshare", "shiprocket logistics",
         "third party logistics", "3pl", "courier",
     ],
-    "mobile_electronics": [
-        "smartphone", "mobile phone", "electronics retail", "consumer electronics",
-        "croma", "reliance digital", "vivo india", "samsung india", "apple india",
-        "xiaomi", "oneplus", "realme", "electronics ecommerce", "gadgets",
-        "laptop india", "tv retail", "iphone india",
-    ],
+    "fintech": [],  # matched via sector_taxonomies.FINTECH_TAXONOMY
+    "mobile_electronics": [],  # matched via sector taxonomies
 }
 
 GEMINI_SECTORS = list(SECTOR_KEYWORDS.keys()) + ["cross_sector"]
@@ -236,6 +233,7 @@ NEWSAPI_QUERIES = {
     "fashion": "fashion retail India OR apparel ecommerce India OR Myntra fashion",
     "bpc": "beauty personal care India OR skincare India OR cosmetics startup India",
     "e_logistics": "logistics India OR Delhivery OR last mile delivery India OR Shiprocket",
+    "fintech": "fintech India OR PhonePe OR Paytm OR Razorpay OR UPI India OR digital lending India",
     "mobile_electronics": "smartphone India OR electronics retail India OR Samsung India OR Apple India",
 }
 
@@ -249,6 +247,7 @@ GNEWS_QUERIES = {
     "fashion": "fashion retail India OR Myntra OR apparel India",
     "bpc": "skincare India OR cosmetics India OR Mamaearth",
     "e_logistics": "Delhivery OR logistics India OR last mile delivery",
+    "fintech": "PhonePe OR Paytm OR Razorpay OR UPI India OR fintech India",
     "mobile_electronics": "smartphone India OR Samsung India OR Apple India",
 }
 
@@ -263,6 +262,7 @@ INDIA_NEWS_MARKERS = (
     "india", "indian", "delhi", "mumbai", "bengaluru", "bangalore", "chennai",
     "hyderabad", "kolkata", "pune", "gurugram", "gurgaon", "noida", "ncr",
     "flipkart", "zomato", "swiggy", "blinkit", "zepto", "myntra", "meesho",
+    "jiomart", "snapdeal", "shopsy", "ondc", "phonepe", "razorpay", "bharatpe",
     "ola ", "rapido", "paytm", "upi ", "rupee", "sebi", "rbi ", "gst ",
     ".in/", "livemint", "economictimes", "business-standard",
 )
@@ -343,27 +343,32 @@ def is_ride_hailing_relevant(title, body="", subtitle=""):
 
 
 def match_sectors(title, body="", subtitle=""):
-    """Return sector tags whose keywords appear in the headline or summary."""
+    """Return precise sector tags using taxonomies plus legacy specialist rules."""
     haystack = _normalize(f"{title} {subtitle} {body}")
     matched = []
+    taxonomy_sector = best_taxonomy_sector(title, body, subtitle)
+    if taxonomy_sector:
+        matched.append(taxonomy_sector)
     for sector, keywords in SECTOR_KEYWORDS.items():
         if sector == "ride_hailing":
             if is_ride_hailing_relevant(title, body, subtitle):
                 matched.append("ride_hailing")
             continue
         if sector in TAXONOMIES:
-            if taxonomy_matches(sector, title, body, subtitle):
-                matched.append(sector)
+            continue
+        if taxonomy_sector:
+            # A confident semantic taxonomy match takes precedence over broad
+            # legacy keyword sectors.
             continue
         for kw in keywords:
             if kw.lower() in haystack:
                 matched.append(sector)
                 break
-    for kw in INDIRECT_KEYWORDS:
-        if kw.lower() in haystack:
-            if "cross_sector" not in matched:
+    if not matched:
+        for kw in INDIRECT_KEYWORDS:
+            if kw.lower() in haystack:
                 matched.append("cross_sector")
-            break
+                break
     return matched
 
 

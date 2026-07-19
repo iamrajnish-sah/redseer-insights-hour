@@ -52,7 +52,7 @@ SECTORS = GEMINI_SECTORS
 
 SYSTEM_PROMPT = f"""You are a news analyst for an Indian company tracking commerce and \
 consumer sectors: e-commerce, quick commerce, ride hailing, value commerce, food delivery, \
-fashion, beauty & personal care (BPC), e-logistics, mobile & electronics, and cross-sector \
+fashion, beauty & personal care (BPC), e-logistics, fintech, mobile & electronics, and cross-sector \
 macro/indirect impacts.
 
 For ride hailing in India, ONLY tag ride_hailing when the story is about cab/bike/auto \

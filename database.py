@@ -122,6 +122,7 @@ def init_db():
             init_subscriber_tables(conn)
         except Exception as exc:
             print(f"  [warning] subscriber tables init failed: {exc}")
+        _migrate_sector_taxonomies(conn)
 
 
 def _restore_cross_date_duplicates(conn):
@@ -151,6 +152,71 @@ def _normalize_newspaper_sources(conn):
            AND lower(source) LIKE '%mint%'
            AND source != 'Mint Newspaper'"""
     )
+
+
+def _migrate_sector_taxonomies(conn):
+    """One-time, non-destructive retag of historical articles.
+
+    Existing rows are never deleted and relevance is preserved. Articles that
+    no longer clear a specialist taxonomy threshold move to cross_sector
+    ("Other") instead of remaining falsely tagged.
+    """
+    version = "india-taxonomies-v2"
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = 'sector_taxonomy_version'"
+    ).fetchone()
+    if row and row["value"] == version:
+        return
+
+    from sector_keywords import match_sectors
+
+    rows = conn.execute(
+        """SELECT id, title, subtitle, body, summary, sectors
+           FROM articles
+           WHERE relevant = 1 AND duplicate_of IS NULL"""
+    ).fetchall()
+    updated = 0
+    for article in rows:
+        sectors = match_sectors(
+            article["title"],
+            article["body"] or article["summary"] or "",
+            article["subtitle"] or "",
+        )
+        if not sectors:
+            sectors = ["cross_sector"]
+        encoded = json.dumps(sectors)
+        current = json.dumps(
+            normalize_sector_tags_for_migration(article["sectors"])
+        )
+        if encoded != current:
+            conn.execute(
+                "UPDATE articles SET sectors = ? WHERE id = ?",
+                (encoded, article["id"]),
+            )
+            updated += 1
+
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        ("sector_taxonomy_version", version),
+    )
+    print(
+        f"  [taxonomy] retagged {updated}/{len(rows)} historical article(s); "
+        "no rows deleted"
+    )
+
+
+def normalize_sector_tags_for_migration(raw_sectors):
+    """Normalize stored JSON tags without importing sector_keywords at module load."""
+    try:
+        sectors = json.loads(raw_sectors or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return []
+    normalized = []
+    for sector in sectors:
+        sector = "cross_sector" if sector == "other_relevant" else sector
+        if sector not in normalized:
+            normalized.append(sector)
+    return normalized
 
 
 def _now_iso():
