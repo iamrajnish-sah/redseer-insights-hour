@@ -10,6 +10,8 @@ Vercel now connects Blob via OIDC — use VERCEL_OIDC_TOKEN on deployed function
 
 import os
 import sqlite3
+import tempfile
+import time
 import urllib.parse
 import requests
 
@@ -19,6 +21,8 @@ _CACHED_BLOB_URL = None
 _LAST_SAVE_ERROR = None
 _LAST_SAVE_OK = None
 _LAST_AUTH_MODE = None
+# Byte slack for size comparisons (SQLite page granularity / WAL churn).
+_SIZE_MARGIN_BYTES = 16_384
 
 
 def _read_write_token():
@@ -128,32 +132,37 @@ def _save_with_vercel_sdk(local_path):
         return False
 
 
-def _list_blob_url():
+def _list_blob_url(retries=3):
+    """Find the backup blob URL. Retries — a transient failure here must not
+    make the app 'start fresh' and later clobber the cloud backup."""
     global _CACHED_BLOB_URL
     if _CACHED_BLOB_URL:
         return _CACHED_BLOB_URL
     if not enabled():
         return None
-    try:
-        resp = requests.get(
-            _api_url({"prefix": _pathname()}),
-            headers=_headers(),
-            timeout=30,
-        )
-        if resp.status_code != 200:
-            print(f"  [warning] blob list failed: {resp.status_code} {resp.text[:240]}")
-            return None
-        blobs = (resp.json() or {}).get("blobs") or []
-        for blob in blobs:
-            if blob.get("pathname") == _pathname():
-                _CACHED_BLOB_URL = blob.get("downloadUrl") or blob.get("url")
-                if _CACHED_BLOB_URL:
+    for attempt in range(retries):
+        try:
+            resp = requests.get(
+                _api_url({"prefix": _pathname()}),
+                headers=_headers(),
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                blobs = (resp.json() or {}).get("blobs") or []
+                for blob in blobs:
+                    if blob.get("pathname") == _pathname():
+                        _CACHED_BLOB_URL = blob.get("downloadUrl") or blob.get("url")
+                        if _CACHED_BLOB_URL:
+                            return _CACHED_BLOB_URL
+                if blobs:
+                    _CACHED_BLOB_URL = blobs[0].get("downloadUrl") or blobs[0].get("url")
                     return _CACHED_BLOB_URL
-        if blobs:
-            _CACHED_BLOB_URL = blobs[0].get("downloadUrl") or blobs[0].get("url")
-            return _CACHED_BLOB_URL
-    except Exception as exc:
-        print(f"  [warning] blob list error: {exc}")
+                return None  # listing worked, no backup exists yet
+            print(f"  [warning] blob list failed (attempt {attempt + 1}/{retries}): {resp.status_code} {resp.text[:240]}")
+        except Exception as exc:
+            print(f"  [warning] blob list error (attempt {attempt + 1}/{retries}): {exc}")
+        if attempt < retries - 1:
+            time.sleep(1.5 * (attempt + 1))
     return None
 
 
@@ -188,6 +197,123 @@ def _blob_remote_size(blob_url):
         return 0
 
 
+def _article_count(db_path):
+    """Number of canonical (non-duplicate) articles in a SQLite file. -1 on error."""
+    if not db_path or not os.path.isfile(db_path):
+        return 0
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM articles WHERE duplicate_of IS NULL"
+            ).fetchone()
+            return row[0] if row else 0
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return -1
+
+
+def _download_blob(blob_url):
+    try:
+        resp = requests.get(blob_url, headers=_headers(), timeout=60)
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.content
+    except Exception as exc:
+        print(f"  [warning] blob download failed: {exc}")
+        return None
+
+
+def _write_temp_db(data):
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    try:
+        handle.write(data)
+    finally:
+        handle.close()
+    return handle.name
+
+
+def _table_columns(conn, schema, table):
+    try:
+        rows = conn.execute(f"PRAGMA {schema}.table_info({table})").fetchall()
+        return [row[1] for row in rows]
+    except sqlite3.Error:
+        return []
+
+
+def _merge_remote_into_local(local_path, remote_bytes):
+    """Union rows from a remote DB snapshot into the local DB.
+
+    Articles are matched by URL, or by (title_key, pub_date) when no URL.
+    NEVER deletes or overwrites local rows. Returns articles added."""
+    remote_path = _write_temp_db(remote_bytes)
+    added_articles = 0
+    try:
+        conn = sqlite3.connect(local_path)
+        try:
+            conn.execute("ATTACH DATABASE ? AS remote", (remote_path,))
+
+            local_cols = _table_columns(conn, "main", "articles")
+            remote_cols = _table_columns(conn, "remote", "articles")
+            if local_cols and remote_cols:
+                # id excluded (autoincrement); duplicate_of excluded (remote ids meaningless here)
+                cols = [c for c in remote_cols if c in local_cols and c not in ("id", "duplicate_of")]
+                col_list = ", ".join(cols)
+                sel_list = ", ".join(f"r.{c}" for c in cols)
+                cur = conn.execute(
+                    f"""INSERT OR IGNORE INTO main.articles ({col_list})
+                        SELECT {sel_list} FROM remote.articles r
+                        WHERE r.duplicate_of IS NULL
+                          AND NOT EXISTS (
+                            SELECT 1 FROM main.articles m
+                            WHERE r.url IS NOT NULL AND r.url != '' AND m.url = r.url
+                          )
+                          AND NOT EXISTS (
+                            SELECT 1 FROM main.articles m2
+                            WHERE r.title_key IS NOT NULL AND r.title_key != ''
+                              AND m2.title_key = r.title_key AND m2.pub_date IS r.pub_date
+                          )"""
+                )
+                added_articles = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
+            if _table_columns(conn, "remote", "link_cache") and _table_columns(conn, "main", "link_cache"):
+                conn.execute(
+                    """INSERT OR IGNORE INTO main.link_cache (source_url, resolved_url, image_url, updated_at)
+                       SELECT source_url, resolved_url, image_url, updated_at FROM remote.link_cache"""
+                )
+
+            if _table_columns(conn, "remote", "subscribers") and _table_columns(conn, "main", "subscribers"):
+                conn.execute(
+                    """INSERT OR IGNORE INTO main.subscribers
+                       (name, email, company, designation, status, token, created_at, updated_at)
+                       SELECT r.name, r.email, r.company, r.designation, r.status, r.token, r.created_at, r.updated_at
+                       FROM remote.subscribers r
+                       WHERE NOT EXISTS (
+                         SELECT 1 FROM main.subscribers m WHERE m.email = r.email COLLATE NOCASE
+                       )"""
+                )
+                conn.execute(
+                    """INSERT OR IGNORE INTO main.subscriber_sectors (subscriber_id, sector, created_at)
+                       SELECT m.id, rs.sector, rs.created_at
+                       FROM remote.subscriber_sectors rs
+                       JOIN remote.subscribers r ON r.id = rs.subscriber_id
+                       JOIN main.subscribers m ON m.email = r.email COLLATE NOCASE"""
+                )
+
+            conn.commit()
+            conn.execute("DETACH DATABASE remote")
+        finally:
+            conn.close()
+    finally:
+        try:
+            os.remove(remote_path)
+        except OSError:
+            pass
+    return added_articles
+
+
 def restore_db(local_path, force=False):
     global _CACHED_BLOB_URL
     if not enabled():
@@ -200,41 +326,52 @@ def restore_db(local_path, force=False):
         return False
 
     local_size = os.path.getsize(local_path) if os.path.isfile(local_path) else 0
-    remote_size = _blob_remote_size(blob_url)
+    local_count = _article_count(local_path)
 
-    if local_size > 100_000 and not force and remote_size <= local_size:
-        print(f"  [info] keeping local database ({local_size:,} bytes)")
-        return False
-
-    if local_size > 8_192 and remote_size > local_size * 1.5:
-        print(
-            f"  [info] cloud backup ({remote_size:,} B) is larger than local ({local_size:,} B) — restoring"
-        )
-        force = True
-
-    if local_size > 8_192 and not force:
-        print(f"  [info] local database exists ({local_size:,} bytes) — skip restore (use force to overwrite)")
-        return False
-
-    try:
-        resp = requests.get(blob_url, headers=_headers(), timeout=60)
-        if resp.status_code == 404:
+    # Case 1: local DB empty or unreadable — download the full backup file.
+    if local_size < 8_192 or local_count <= 0:
+        data = _download_blob(blob_url)
+        if not data:
             return False
-        resp.raise_for_status()
-        if len(resp.content) < 512 and not force:
+        if len(data) < 512 and not force:
             print("  [info] cloud blob too small — skip restore")
             return False
         directory = os.path.dirname(local_path)
         if directory:
             os.makedirs(directory, exist_ok=True)
         with open(local_path, "wb") as handle:
-            handle.write(resp.content)
+            handle.write(data)
         _CACHED_BLOB_URL = blob_url
-        print(f"  [info] restored database from blob ({len(resp.content):,} bytes)")
+        print(
+            f"  [restore] downloaded cloud backup ({len(data):,} bytes, "
+            f"{_article_count(local_path)} articles)"
+        )
         return True
-    except Exception as exc:
-        print(f"  [warning] blob restore failed: {exc}")
+
+    # Case 2: local DB has articles — NEVER overwrite the file.
+    # Merge any articles the cloud backup has that local is missing.
+    remote_size = _blob_remote_size(blob_url)
+    if not force and remote_size <= local_size * 1.02 + _SIZE_MARGIN_BYTES:
+        print(
+            f"  [restore] keeping local database ({local_size:,} B, {local_count} articles); "
+            f"cloud backup is not larger ({remote_size:,} B)"
+        )
         return False
+
+    data = _download_blob(blob_url)
+    if not data:
+        return False
+    try:
+        added = _merge_remote_into_local(local_path, data)
+    except Exception as exc:
+        print(f"  [warning] blob restore merge failed: {exc}")
+        return False
+    _CACHED_BLOB_URL = blob_url
+    print(
+        f"  [restore] merged cloud backup into local DB: +{added} article(s), "
+        f"local now has {_article_count(local_path)} articles (nothing deleted)"
+    )
+    return True
 
 
 def save_db(local_path, force=False):
@@ -249,18 +386,46 @@ def save_db(local_path, force=False):
         _LAST_SAVE_ERROR = "local database file missing"
         return False
 
+    _checkpoint_sqlite(local_path)
     local_size = os.path.getsize(local_path)
     blob_url = _list_blob_url()
     if blob_url and not force:
         remote_size = _blob_remote_size(blob_url)
-        if remote_size > 50_000 and local_size < 10_000:
-            _LAST_SAVE_ERROR = (
-                f"Refused to overwrite cloud backup ({remote_size:,} bytes) with tiny local DB "
-                f"({local_size:,} bytes). Click Restore from Cloud first."
+        # Integrity guard: never replace a larger cloud backup with a smaller
+        # local dataset (happens after a failed cold-start restore on Vercel).
+        if remote_size > local_size * 1.02 + _SIZE_MARGIN_BYTES:
+            local_count = _article_count(local_path)
+            print(
+                f"  [integrity] cloud backup ({remote_size:,} B) larger than local "
+                f"({local_size:,} B, {local_count} articles) — merging cloud data before save"
             )
-            return False
-
-    _checkpoint_sqlite(local_path)
+            data = _download_blob(blob_url)
+            remote_count = -1
+            if data:
+                remote_tmp = _write_temp_db(data)
+                try:
+                    remote_count = _article_count(remote_tmp)
+                finally:
+                    try:
+                        os.remove(remote_tmp)
+                    except OSError:
+                        pass
+                try:
+                    added = _merge_remote_into_local(local_path, data)
+                    print(f"  [integrity] merged {added} article(s) from cloud backup into local DB")
+                except Exception as exc:
+                    print(f"  [warning] cloud merge failed: {exc}")
+            local_count = _article_count(local_path)
+            if remote_count > local_count:
+                _LAST_SAVE_ERROR = (
+                    f"Refused to overwrite cloud backup ({remote_count} articles, {remote_size:,} B) "
+                    f"with smaller local dataset ({local_count} articles, {local_size:,} B). "
+                    f"Use Restore from Cloud, or force-save to override."
+                )
+                print(f"  [integrity] {_LAST_SAVE_ERROR}")
+                return False
+            _checkpoint_sqlite(local_path)
+            local_size = os.path.getsize(local_path)
 
     sdk_result = _save_with_vercel_sdk(local_path)
     if sdk_result and sdk_result is not False:

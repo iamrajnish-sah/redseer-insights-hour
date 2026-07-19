@@ -68,9 +68,16 @@ def _persist():
 
 
 def run_refresh(include_rss=True, include_gnews=True, include_newsapi=None):
-    """Pull RSS + GNews (+ NewsAPI when configured) and dedupe."""
+    """Pull RSS + GNews (+ NewsAPI when configured) and dedupe.
+
+    Refresh is insert-only: new articles are merged in by URL / title+date.
+    Existing articles are never deleted or overwritten."""
     if include_newsapi is None:
         include_newsapi = bool(os.environ.get("NEWSAPIKEY") or os.environ.get("NEWSAPI_KEY"))
+
+    before_total = database.get_total_count()
+    before_relevant = database.get_relevant_count()
+    print(f"[refresh] before: {before_total} stored, {before_relevant} relevant")
 
     summary = {
         "rss": None,
@@ -78,6 +85,7 @@ def run_refresh(include_rss=True, include_gnews=True, include_newsapi=None):
         "newsapi": None,
         "total_inserted": 0,
         "total_refreshed": 0,
+        "articles_before": before_total,
     }
 
     if include_rss:
@@ -105,6 +113,21 @@ def run_refresh(include_rss=True, include_gnews=True, include_newsapi=None):
     dedupe_stats = dedupe.run_all_dedupes()
     summary["merged_duplicates"] = dedupe_stats["total_merged"]
     database.set_meta(META_LAST_REFRESH, datetime.now().isoformat(timespec="seconds"))
+
+    after_total = database.get_total_count()
+    after_relevant = database.get_relevant_count()
+    summary["articles_after"] = after_total
+    print(
+        f"[refresh] after: {after_total} stored, {after_relevant} relevant — "
+        f"{summary['total_inserted']} inserted, {summary['total_refreshed']} refreshed, "
+        f"{dedupe_stats['total_merged']} marked duplicate (rows kept, nothing deleted)"
+    )
+    if after_total < before_total:
+        print(
+            f"[refresh][WARNING] stored article count DECREASED {before_total} -> {after_total} — "
+            f"this should never happen; investigate immediately"
+        )
+
     _persist()
     return summary
 

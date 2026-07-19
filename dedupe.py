@@ -31,14 +31,17 @@ def _similarity(a_row, b_row):
 
 
 def find_and_mark_duplicates(pub_date=None, high_threshold=0.82):
-    """Mark near-duplicate relevant articles (optionally scoped to one pub_date)."""
+    """Mark near-duplicate relevant articles within the same publish date.
+
+    Buckets include pub_date so recurring headlines on different days are
+    never merged — historical articles stay visible."""
     rows = list(database.get_relevant_articles(pub_date=pub_date))
     if len(rows) < 2:
         return 0
 
     buckets = {}
     for row in rows:
-        key = normalize_title(row["title"])[:72]
+        key = (row["pub_date"], normalize_title(row["title"])[:72])
         buckets.setdefault(key, []).append(row)
 
     merged = 0

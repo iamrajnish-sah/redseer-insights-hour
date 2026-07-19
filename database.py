@@ -97,6 +97,7 @@ def init_db():
             """
         )
         _backfill_title_keys(conn)
+        _restore_cross_date_duplicates(conn)
         dedupe_by_url(conn)
         dedupe_by_title(conn)
         _normalize_newspaper_sources(conn)
@@ -121,6 +122,25 @@ def init_db():
             init_subscriber_tables(conn)
         except Exception as exc:
             print(f"  [warning] subscriber tables init failed: {exc}")
+
+
+def _restore_cross_date_duplicates(conn):
+    """Un-mark articles wrongly merged as duplicates across different publish dates.
+
+    A recurring headline (e.g. a daily market wrap) is NOT a duplicate of last
+    week's story. Same-URL pairs are true duplicates and stay merged."""
+    cur = conn.execute(
+        """UPDATE articles SET duplicate_of = NULL
+           WHERE duplicate_of IS NOT NULL
+             AND id IN (
+               SELECT d.id FROM articles d
+               JOIN articles k ON k.id = d.duplicate_of
+               WHERE d.pub_date IS NOT k.pub_date
+                 AND (d.url IS NULL OR d.url = '' OR k.url IS NULL OR k.url = '' OR d.url != k.url)
+             )"""
+    )
+    if cur.rowcount and cur.rowcount > 0:
+        print(f"  [integrity] restored {cur.rowcount} article(s) wrongly merged across dates")
 
 
 def _normalize_newspaper_sources(conn):
@@ -181,6 +201,12 @@ def get_relevant_count():
         row = conn.execute(
             "SELECT COUNT(*) c FROM articles WHERE relevant = 1 AND duplicate_of IS NULL"
         ).fetchone()
+    return row["c"] if row else 0
+
+
+def get_total_count():
+    with get_conn() as conn:
+        row = conn.execute("SELECT COUNT(*) c FROM articles").fetchone()
     return row["c"] if row else 0
 
 
@@ -310,14 +336,17 @@ def dedupe_by_url(conn=None):
 
 
 def dedupe_by_title(conn=None):
-    """Mark duplicate rows that share the same normalized headline (keeps oldest)."""
+    """Mark duplicates sharing the same normalized headline AND publish date.
+
+    Scoped to pub_date so recurring headlines on different days are kept —
+    historical articles must never disappear as 'duplicates'."""
     def _run(c):
         groups = c.execute(
-            """SELECT title_key, MIN(id) AS keep_id
+            """SELECT title_key, pub_date, MIN(id) AS keep_id
                FROM articles
                WHERE title_key IS NOT NULL AND title_key != ''
                AND duplicate_of IS NULL
-               GROUP BY title_key
+               GROUP BY title_key, pub_date
                HAVING COUNT(*) > 1"""
         ).fetchall()
         merged = 0
@@ -325,8 +354,8 @@ def dedupe_by_title(conn=None):
             keep_id = row["keep_id"]
             dupes = c.execute(
                 """SELECT id FROM articles
-                   WHERE title_key = ? AND id != ? AND duplicate_of IS NULL""",
-                (row["title_key"], keep_id),
+                   WHERE title_key = ? AND pub_date IS ? AND id != ? AND duplicate_of IS NULL""",
+                (row["title_key"], row["pub_date"], keep_id),
             ).fetchall()
             for dupe in dupes:
                 c.execute(
@@ -354,6 +383,7 @@ def insert_articles(articles):
     refreshed_ids = []
     fetched_at = _now_iso()
     with get_conn() as conn:
+        before_total = conn.execute("SELECT COUNT(*) c FROM articles").fetchone()["c"]
         for a in articles:
             origin = getattr(a, "origin", "epub")
             url = _normalize_url(getattr(a, "url", None))
@@ -381,9 +411,9 @@ def insert_articles(articles):
             if title_key:
                 existing = conn.execute(
                     """SELECT id FROM articles
-                       WHERE title_key = ? AND duplicate_of IS NULL
+                       WHERE title_key = ? AND pub_date IS ? AND duplicate_of IS NULL
                        ORDER BY id LIMIT 1""",
-                    (title_key,),
+                    (title_key, getattr(a, "pub_date", None)),
                 ).fetchone()
                 if existing:
                     _refresh_existing(
@@ -433,15 +463,22 @@ def insert_articles(articles):
                 if title_key:
                     existing = conn.execute(
                         """SELECT id FROM articles
-                           WHERE title_key = ? AND duplicate_of IS NULL
+                           WHERE title_key = ? AND pub_date IS ? AND duplicate_of IS NULL
                            ORDER BY id LIMIT 1""",
-                        (title_key,),
+                        (title_key, getattr(a, "pub_date", None)),
                     ).fetchone()
                     if existing:
                         _refresh_existing(
                             conn, existing["id"], fetched_at, image_url, resolved_url
                         )
                         refreshed_ids.append(existing["id"])
+        after_total = conn.execute("SELECT COUNT(*) c FROM articles").fetchone()["c"]
+    skipped = len(articles) - inserted - len(refreshed_ids)
+    print(
+        f"  [db] insert_articles: {len(articles)} fetched, {inserted} new, "
+        f"{len(refreshed_ids)} refreshed (existing), {skipped} skipped; "
+        f"total {before_total} -> {after_total} (inserts only — nothing deleted)"
+    )
     persist()
     return inserted, inserted_ids, refreshed_ids
 
