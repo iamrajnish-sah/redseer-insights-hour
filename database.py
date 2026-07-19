@@ -122,6 +122,11 @@ def init_db():
             init_subscriber_tables(conn)
         except Exception as exc:
             print(f"  [warning] subscriber tables init failed: {exc}")
+        try:
+            from intelligence_hub import init_intelligence_tables
+            init_intelligence_tables(conn)
+        except Exception as exc:
+            print(f"  [warning] intelligence tables init failed: {exc}")
         _migrate_sector_taxonomies(conn)
 
 

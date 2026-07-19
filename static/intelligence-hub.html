@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Intelligence Hub — Redseer Insight Hour</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#eef1f8; --surface:#fff; --surface-2:#f8fafc; --border:#e2e8f0; --text:#0f172a;
+    --text-muted:#64748b; --primary:#1e3a5f; --accent:#ea580c; --teal:#0d9488; --teal-soft:#ecfdf5;
+    --danger:#dc2626; --success:#059669; --radius:14px; --font:"DM Sans",sans-serif;
+    --font-display:"Fraunces",Georgia,serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:var(--font); color:var(--text); background:var(--bg); }
+  .shell { max-width:1200px; margin:0 auto; padding:24px 20px 56px; }
+  .top { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:22px; }
+  .brand { font-family:var(--font-display); font-size:1.75rem; color:var(--primary); margin:0; }
+  .brand em { font-style:normal; color:var(--accent); }
+  .sub { color:var(--text-muted); margin:6px 0 0; }
+  .btn { border:none; border-radius:10px; padding:10px 16px; font:inherit; font-weight:600; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
+  .btn-primary { background:var(--primary); color:#fff; }
+  .btn-teal { background:var(--teal); color:#fff; }
+  .btn-ghost { background:#fff; color:var(--text); border:1px solid var(--border); }
+  .btn-danger { background:#fef2f2; color:var(--danger); border:1px solid #fecaca; }
+  .btn-sm { padding:7px 12px; font-size:.85rem; }
+  .btn:disabled { opacity:.6; cursor:not-allowed; }
+  .panel { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin-bottom:18px; }
+  .panel-title { font-size:.82rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); margin:0 0 14px; }
+  .filters { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
+  .field { display:flex; flex-direction:column; gap:6px; }
+  .field label { font-size:.8rem; font-weight:600; color:var(--text-muted); }
+  .input, .select { border:1px solid var(--border); border-radius:10px; padding:10px 12px; font:inherit; background:#fff; min-width:170px; }
+  .hint { color:var(--text-muted); font-size:.9rem; margin-top:12px; }
+  .hint.error { color:var(--danger); }
+  .hint.ok { color:var(--success); }
+  .toast { position:fixed; bottom:24px; right:24px; padding:14px 18px; border-radius:12px; color:#fff; font-weight:500; display:none; z-index:100; max-width:380px; }
+  .toast.show { display:block; }
+  .toast.success { background:var(--success); }
+  .toast.error { background:var(--danger); }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  th, td { padding:11px 8px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+  th { font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); background:var(--surface-2); }
+  .badge { display:inline-block; padding:3px 8px; border-radius:999px; font-size:.75rem; font-weight:600; background:var(--teal-soft); color:var(--teal); }
+  details.section { border:1px solid var(--border); border-radius:12px; background:#fff; margin-bottom:10px; overflow:hidden; }
+  details.section summary { cursor:pointer; padding:14px 16px; font-weight:700; color:var(--primary); background:var(--surface-2); list-style:none; }
+  details.section summary::-webkit-details-marker { display:none; }
+  details.section[open] summary { border-bottom:1px solid var(--border); }
+  .section-body { padding:14px 16px 16px; }
+  .metric-grid { display:grid; gap:10px; }
+  .metric-card { border:1px solid var(--border); border-radius:10px; padding:12px; background:var(--surface-2); }
+  .metric-card strong { display:block; margin-bottom:4px; }
+  .muted { color:var(--text-muted); font-size:.88rem; }
+  .source-list { display:grid; gap:8px; }
+  .source-item a { color:var(--teal); text-decoration:none; font-weight:600; }
+  .source-item a:hover { text-decoration:underline; }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 18px; }
+  .empty { text-align:center; color:var(--text-muted); padding:28px 12px; }
+  .loading { display:inline-block; width:14px; height:14px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="top">
+    <div>
+      <h1 class="brand">Intelligence <em>Hub</em></h1>
+      <p class="sub">Consultant-style sector briefs from already processed news. Does not re-fetch feeds.</p>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn btn-ghost" href="/">← Dashboard</a>
+      <a class="btn btn-ghost" href="/admin/subscribers">Subscribers</a>
+    </div>
+  </div>
+
+  <div class="panel">
+    <p class="panel-title">Generate intelligence</p>
+    <div class="filters">
+      <div class="field">
+        <label for="sectorSelect">Sector</label>
+        <select class="select" id="sectorSelect"></select>
+      </div>
+      <div class="field">
+        <label for="modeSelect">Date mode</label>
+        <select class="select" id="modeSelect" onchange="toggleDateMode()">
+          <option value="single">Single date</option>
+          <option value="range">Date range</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="startDate" id="startLabel">Date</label>
+        <input class="input" type="date" id="startDate">
+      </div>
+      <div class="field" id="endDateWrap" style="display:none;">
+        <label for="endDate">End date</label>
+        <input class="input" type="date" id="endDate">
+      </div>
+      <button class="btn btn-teal" id="btnPreview" onclick="previewArticles()">Preview articles</button>
+      <button class="btn btn-primary" id="btnGenerate" onclick="generateReport(false)">Generate Intelligence</button>
+    </div>
+    <div class="hint" id="statusHint">Checking Intelligence API key...</div>
+    <div class="hint" id="previewHint"></div>
+  </div>
+
+  <div class="panel" id="reportPanel" style="display:none;">
+    <p class="panel-title">Report</p>
+    <div id="reportMeta" class="muted" style="margin-bottom:8px;"></div>
+    <div class="actions" id="reportActions"></div>
+    <div id="reportBody"></div>
+  </div>
+
+  <div class="panel">
+    <p class="panel-title">History</p>
+    <div class="filters" style="margin-bottom:12px;">
+      <div class="field">
+        <label for="historySector">Filter sector</label>
+        <select class="select" id="historySector" onchange="loadHistory()">
+          <option value="">All sectors</option>
+        </select>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="loadHistory()">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Sector</th><th>Period</th><th>Articles</th><th>Generated</th><th>Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="historyRows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="historyEmpty" style="display:none;">No intelligence reports yet.</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = "";
+let adminPassword = sessionStorage.getItem("adminPassword") || "";
+let SECTORS = {};
+let currentReport = null;
+
+function showToast(msg, isError=false) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = "toast show " + (isError ? "error" : "success");
+  setTimeout(() => el.className = "toast", 4200);
+}
+
+function adminHeaders(extra={}) {
+  const h = { ...extra };
+  if (adminPassword) h["X-Admin-Password"] = adminPassword;
+  return h;
+}
+
+async function adminFetch(url, opts={}) {
+  opts.headers = adminHeaders(opts.headers || {});
+  let resp = await fetch(url, opts);
+  if (resp.status === 401) {
+    adminPassword = prompt("Admin password:") || "";
+    if (adminPassword) sessionStorage.setItem("adminPassword", adminPassword);
+    opts.headers = adminHeaders(opts.headers || {});
+    resp = await fetch(url, opts);
+  }
+  return resp;
+}
+
+async function ensureAdmin() {
+  const status = await (await fetch(API + "/api/admin/status")).json();
+  if (!status.protected) return true;
+  if (adminPassword) {
+    const verify = await adminFetch(API + "/api/admin/verify", { method: "POST" });
+    if (verify.ok) return true;
+  }
+  adminPassword = prompt("Admin password:") || "";
+  if (!adminPassword) return false;
+  sessionStorage.setItem("adminPassword", adminPassword);
+  const verify = await adminFetch(API + "/api/admin/verify", { method: "POST" });
+  if (!verify.ok) {
+    adminPassword = "";
+    sessionStorage.removeItem("adminPassword");
+    return false;
+  }
+  return true;
+}
+
+function toggleDateMode() {
+  const range = document.getElementById("modeSelect").value === "range";
+  document.getElementById("endDateWrap").style.display = range ? "flex" : "none";
+  document.getElementById("startLabel").textContent = range ? "Start date" : "Date";
+}
+
+function selectedDates() {
+  const start = document.getElementById("startDate").value;
+  const range = document.getElementById("modeSelect").value === "range";
+  const end = range ? (document.getElementById("endDate").value || start) : start;
+  return { start_date: start, end_date: end };
+}
+
+function fillSectors(map) {
+  SECTORS = map || {};
+  const sectorSelect = document.getElementById("sectorSelect");
+  const historySector = document.getElementById("historySector");
+  sectorSelect.innerHTML = "";
+  historySector.innerHTML = '<option value="">All sectors</option>';
+  for (const [key, label] of Object.entries(SECTORS)) {
+    const opt = document.createElement("option");
+    opt.value = key; opt.textContent = label;
+    sectorSelect.appendChild(opt);
+    const opt2 = opt.cloneNode(true);
+    historySector.appendChild(opt2);
+  }
+  if (SECTORS.value_commerce) sectorSelect.value = "value_commerce";
+}
+
+function setLoading(id, loading) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.disabled = loading;
+  if (loading) {
+    btn.dataset.label = btn.innerHTML;
+    btn.innerHTML = `<span class="loading"></span> Working...`;
+  } else if (btn.dataset.label) {
+    btn.innerHTML = btn.dataset.label;
+  }
+}
+
+function esc(s) {
+  return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
+}
+
+function sourceLinks(ids, sources) {
+  const byId = Object.fromEntries((sources || []).map(s => [s.id, s]));
+  return (ids || []).map(id => {
+    const src = byId[id];
+    if (!src) return `#${id}`;
+    const href = src.resolved_url || src.url || "#";
+    return `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(src.title || ("Article " + id))}</a>`;
+  }).join(" · ");
+}
+
+function renderListSection(title, rows, formatter) {
+  if (!rows || !rows.length) {
+    return `<details class="section"><summary>${esc(title)} (0)</summary><div class="section-body muted">None identified.</div></details>`;
+  }
+  const body = rows.map(formatter).join("");
+  return `<details class="section" open><summary>${esc(title)} (${rows.length})</summary><div class="section-body metric-grid">${body}</div></details>`;
+}
+
+function renderReport(report) {
+  currentReport = report;
+  document.getElementById("reportPanel").style.display = "block";
+  const label = report.sector_label || SECTORS[report.sector] || report.sector;
+  document.getElementById("reportMeta").textContent =
+    `${label} · ${report.start_date} → ${report.end_date} · ${report.article_count || 0} articles · ${report.cached ? "cached" : "fresh"} · ${report.generated_at || ""}`;
+
+  document.getElementById("reportActions").innerHTML = `
+    <button class="btn btn-ghost btn-sm" onclick="generateReport(true)">Regenerate</button>
+    <a class="btn btn-ghost btn-sm" href="${API}/api/admin/intelligence/reports/${report.id}/export.json" onclick="return downloadWithAuth(event, this.href)">Export JSON</a>
+    <a class="btn btn-ghost btn-sm" href="${API}/api/admin/intelligence/reports/${report.id}/export.md" onclick="return downloadWithAuth(event, this.href)">Export Markdown</a>
+    <a class="btn btn-ghost btn-sm" href="${API}/api/admin/intelligence/reports/${report.id}/export.pdf" target="_blank" onclick="return openWithAuth(event, this.href)">Export PDF</a>
+    <button class="btn btn-danger btn-sm" onclick="deleteReport(${report.id})">Delete</button>
+  `;
+
+  const r = report.report || {};
+  const sources = report.sources || [];
+  let html = "";
+  html += `<details class="section" open><summary>Executive Summary</summary><div class="section-body">${esc(r.executive_summary || "No summary.")}</div></details>`;
+
+  html += renderListSection("Key Metrics", r.key_metrics, item => `
+    <div class="metric-card">
+      <strong>${esc(item.company)} — ${esc(item.metric)}</strong>
+      <div>${esc(item.value)}${item.comparison ? " · " + esc(item.comparison) : ""}${item.period ? " · " + esc(item.period) : ""}</div>
+      <div class="muted">${sourceLinks(item.source_ids, sources)}</div>
+    </div>`);
+
+  html += renderListSection("Strategic Moves", r.strategic_moves, item => `
+    <div class="metric-card">
+      <strong>${esc(item.company)} <span class="badge">${esc(item.importance || "Medium")}</span></strong>
+      <div>${esc(item.move)}</div>
+      <div class="muted">${sourceLinks(item.source_ids, sources)}</div>
+    </div>`);
+
+  html += renderListSection("Funding", r.funding, item => `
+    <div class="metric-card">
+      <strong>${esc(item.company)}</strong>
+      <div>${esc(item.amount)}${item.investor ? " · " + esc(item.investor) : ""}</div>
+      <div class="muted">${sourceLinks(item.source_ids, sources)}</div>
+    </div>`);
+
+  html += renderListSection("Partnerships", r.partnerships, item => `
+    <div class="metric-card">
+      <strong>${esc(item.company_a)} × ${esc(item.company_b)}</strong>
+      <div>${esc(item.purpose)}</div>
+      <div class="muted">${sourceLinks(item.source_ids, sources)}</div>
+    </div>`);
+
+  html += renderListSection("Leadership", r.leadership_changes, item => `
+    <div class="metric-card">
+      <strong>${esc(item.company)} — ${esc(item.executive)}</strong>
+      <div>${esc(item.role)} · ${esc(item.change)}</div>
+      <div class="muted">${sourceLinks(item.source_ids, sources)}</div>
+    </div>`);
+
+  html += renderListSection("Product Launches", r.product_launches, item => `
+    <div class="metric-card">
+      <strong>${esc(item.company)} — ${esc(item.product)}</strong>
+      <div>${esc(item.description)}</div>
+      <div class="muted">${sourceLinks(item.source_ids, sources)}</div>
+    </div>`);
+
+  html += renderListSection("Technology & AI", r.technology_ai, item => `
+    <div class="metric-card">
+      <strong>${esc(item.company)} — ${esc(item.technology)}</strong>
+      <div>${esc(item.business_impact)}</div>
+      <div class="muted">${sourceLinks(item.source_ids, sources)}</div>
+    </div>`);
+
+  html += renderListSection("Consumer Trends", r.consumer_trends, item => `
+    <div class="metric-card">
+      <strong>${esc(item.trend)}</strong>
+      <div>${esc(item.evidence)}</div>
+      <div class="muted">${esc(item.impact)} · ${sourceLinks(item.source_ids, sources)}</div>
+    </div>`);
+
+  html += renderListSection("Regulations", r.regulations, item => `
+    <div class="metric-card">
+      <strong>${esc(item.authority)} — ${esc(item.policy)}</strong>
+      <div>${esc(item.impact)}</div>
+      <div class="muted">${sourceLinks(item.source_ids, sources)}</div>
+    </div>`);
+
+  html += renderListSection("Competitive Landscape", r.competitive_landscape, item => `
+    <div class="metric-card">
+      <strong>${esc(item.company)}</strong>
+      <div>${esc(item.development)}</div>
+      <div class="muted">${esc(item.implication)} · ${sourceLinks(item.source_ids, sources)}</div>
+    </div>`);
+
+  const watch = r.what_to_watch || [];
+  html += `<details class="section" open><summary>What to Watch (${watch.length})</summary><div class="section-body"><ul>${
+    watch.length ? watch.map(w => `<li>${esc(w)}</li>`).join("") : "<li class='muted'>None identified.</li>"
+  }</ul></div></details>`;
+
+  html += `<details class="section" open><summary>Source Articles (${sources.length})</summary><div class="section-body source-list">${
+    sources.length ? sources.map(s => {
+      const href = s.resolved_url || s.url || "#";
+      return `<div class="source-item"><a href="${esc(href)}" target="_blank" rel="noopener">${esc(s.title)}</a><div class="muted">${esc(s.pub_date)} · ${esc(s.source)}</div></div>`;
+    }).join("") : "<div class='muted'>No sources linked.</div>"
+  }</div></details>`;
+
+  document.getElementById("reportBody").innerHTML = html;
+  window.scrollTo({ top: document.getElementById("reportPanel").offsetTop - 20, behavior: "smooth" });
+}
+
+async function downloadWithAuth(event, url) {
+  event.preventDefault();
+  try {
+    const resp = await adminFetch(url);
+    if (!resp.ok) throw new Error("Download failed");
+    const blob = await resp.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const cd = resp.headers.get("Content-Disposition") || "";
+    const match = /filename=\"?([^\";]+)\"?/.exec(cd);
+    a.download = match ? match[1] : "intelligence-export";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e) {
+    showToast(e.message, true);
+  }
+  return false;
+}
+
+async function openWithAuth(event, url) {
+  event.preventDefault();
+  try {
+    const resp = await adminFetch(url);
+    if (!resp.ok) throw new Error("Unable to open PDF view");
+    const html = await resp.text();
+    const win = window.open("", "_blank");
+    win.document.write(html);
+    win.document.close();
+  } catch (e) {
+    showToast(e.message, true);
+  }
+  return false;
+}
+
+async function previewArticles() {
+  const dates = selectedDates();
+  const sector = document.getElementById("sectorSelect").value;
+  if (!dates.start_date) { showToast("Pick a date first.", true); return; }
+  setLoading("btnPreview", true);
+  try {
+    const params = new URLSearchParams({
+      sector,
+      start_date: dates.start_date,
+      end_date: dates.end_date,
+    });
+    const resp = await adminFetch(API + "/api/admin/intelligence/preview?" + params.toString());
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Preview failed");
+    document.getElementById("previewHint").textContent =
+      `${data.consolidated_count} consolidated article(s) from ${data.article_count} processed item(s) for ${SECTORS[sector] || sector}.`;
+    if (!data.article_count) showToast("No processed articles available for the selected period.", true);
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    setLoading("btnPreview", false);
+  }
+}
+
+async function generateReport(force=false) {
+  const dates = selectedDates();
+  const sector = document.getElementById("sectorSelect").value;
+  if (!dates.start_date) { showToast("Pick a date first.", true); return; }
+  setLoading("btnGenerate", true);
+  try {
+    const resp = await adminFetch(API + "/api/admin/intelligence/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sector,
+        start_date: dates.start_date,
+        end_date: dates.end_date,
+        force,
+        generated_by: "admin",
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Generation failed");
+    showToast(data.message || "Report ready.");
+    renderReport(data.report);
+    await loadHistory();
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    setLoading("btnGenerate", false);
+  }
+}
+
+async function loadHistory() {
+  const sector = document.getElementById("historySector").value;
+  const params = new URLSearchParams();
+  if (sector) params.set("sector", sector);
+  const resp = await adminFetch(API + "/api/admin/intelligence/reports?" + params.toString());
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.detail || "Failed to load history");
+  const rows = data.reports || [];
+  document.getElementById("historyEmpty").style.display = rows.length ? "none" : "block";
+  document.getElementById("historyRows").innerHTML = rows.map(row => `
+    <tr>
+      <td>${esc(row.sector_label || row.sector)}</td>
+      <td>${esc(row.start_date)} → ${esc(row.end_date)}</td>
+      <td>${row.article_count || 0}</td>
+      <td>${esc((row.generated_at || "").replace("T", " "))}</td>
+      <td><span class="badge">${esc(row.status)}</span></td>
+      <td>
+        <button class="btn btn-ghost btn-sm" onclick="viewReport(${row.id})">View</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteReport(${row.id})">Delete</button>
+      </td>
+    </tr>`).join("");
+}
+
+async function viewReport(id) {
+  try {
+    const resp = await adminFetch(API + `/api/admin/intelligence/reports/${id}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Failed to load report");
+    data.cached = true;
+    renderReport(data);
+  } catch (e) {
+    showToast(e.message, true);
+  }
+}
+
+async function deleteReport(id) {
+  if (!confirm("Delete this intelligence report?")) return;
+  try {
+    const resp = await adminFetch(API + `/api/admin/intelligence/reports/${id}`, { method: "DELETE" });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Delete failed");
+    showToast("Report deleted.");
+    if (currentReport && currentReport.id === id) {
+      document.getElementById("reportPanel").style.display = "none";
+      currentReport = null;
+    }
+    await loadHistory();
+  } catch (e) {
+    showToast(e.message, true);
+  }
+}
+
+async function init() {
+  if (!(await ensureAdmin())) {
+    document.body.innerHTML = "<div class='shell'><div class='panel'>Admin access required.</div></div>";
+    return;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById("startDate").value = today;
+  document.getElementById("endDate").value = today;
+
+  const statusResp = await adminFetch(API + "/api/admin/intelligence/status");
+  const status = await statusResp.json();
+  fillSectors(status.sectors || await (await fetch(API + "/api/sectors")).json());
+  const hint = document.getElementById("statusHint");
+  if (status.configured) {
+    hint.textContent = status.message;
+    hint.className = "hint ok";
+  } else {
+    hint.textContent = status.message;
+    hint.className = "hint error";
+  }
+  await loadHistory();
+}
+
+init().catch(err => showToast(err.message || String(err), true));
+</script>
+</body>
+</html>

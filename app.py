@@ -33,6 +33,7 @@ import classify_and_summarize
 import dedupe
 import email_digest
 import subscribers
+import intelligence_hub
 import admin_auth
 import auto_refresh
 from db_persist import restore_db, save_db, storage_status, enabled
@@ -85,6 +86,14 @@ def serve_preferences():
 def serve_subscribers_admin():
     return FileResponse(
         os.path.join(STATIC_DIR, "subscribers-admin.html"),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
+@app.get("/admin/intelligence")
+def serve_intelligence_hub():
+    return FileResponse(
+        os.path.join(STATIC_DIR, "intelligence-hub.html"),
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
 
@@ -325,6 +334,182 @@ def admin_delete_subscriber(subscriber_id: int, _: None = Depends(admin_auth.req
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     return {"ok": True, "message": "Subscriber deleted."}
+
+
+# ── Intelligence Hub (independent module; does not touch news pipeline) ──
+
+
+@app.get("/api/admin/intelligence/status")
+def admin_intelligence_status(_: None = Depends(admin_auth.require_admin)):
+    return {
+        "configured": intelligence_hub.intelligence_configured(),
+        "message": (
+            "Intelligence Hub ready."
+            if intelligence_hub.intelligence_configured()
+            else "Set INTELLIGENCE_GEMINI_API_KEY (separate from NEWS Gemini key)."
+        ),
+        "sectors": SECTOR_LABELS,
+    }
+
+
+@app.get("/api/admin/intelligence/preview")
+def admin_intelligence_preview(
+    sector: str,
+    start_date: str,
+    end_date: str = None,
+    _: None = Depends(admin_auth.require_admin),
+):
+    try:
+        articles = intelligence_hub.fetch_sector_articles(sector, start_date, end_date)
+        consolidated = intelligence_hub.consolidate_articles(articles)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "sector": sector,
+        "start_date": start_date,
+        "end_date": end_date or start_date,
+        "article_count": len(articles),
+        "consolidated_count": len(consolidated),
+        "articles": [
+            {
+                "id": a["id"],
+                "title": a.get("title"),
+                "pub_date": a.get("pub_date"),
+                "source": a.get("source"),
+                "url": a.get("resolved_url") or a.get("url"),
+            }
+            for a in consolidated[:100]
+        ],
+    }
+
+
+@app.get("/api/admin/intelligence/reports")
+def admin_list_intelligence_reports(
+    sector: str = None,
+    limit: int = 50,
+    _: None = Depends(admin_auth.require_admin),
+):
+    try:
+        rows = intelligence_hub.list_reports(sector=sector, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    for row in rows:
+        row["sector_label"] = SECTOR_LABELS.get(row["sector"], row["sector"])
+    return {"reports": rows, "count": len(rows)}
+
+
+@app.get("/api/admin/intelligence/reports/{report_id}")
+def admin_get_intelligence_report(report_id: int, _: None = Depends(admin_auth.require_admin)):
+    report = intelligence_hub.get_report(report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    return intelligence_hub.enrich_report_with_sources(report)
+
+
+@app.post("/api/admin/intelligence/generate")
+async def admin_generate_intelligence(
+    request: Request,
+    _: None = Depends(admin_auth.require_admin),
+):
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "Invalid JSON body") from exc
+
+    sector = body.get("sector")
+    start_date = body.get("start_date") or body.get("date")
+    end_date = body.get("end_date") or start_date
+    force = bool(body.get("force") or body.get("regenerate"))
+    generated_by = (body.get("generated_by") or "admin").strip() or "admin"
+
+    try:
+        report = intelligence_hub.generate_or_get_report(
+            sector=sector,
+            start_date=start_date,
+            end_date=end_date,
+            force=force,
+            generated_by=generated_by,
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, f"Intelligence generation failed: {exc}") from exc
+
+    enriched = intelligence_hub.enrich_report_with_sources(report)
+    return {
+        "ok": True,
+        "cached": bool(report.get("cached")),
+        "message": (
+            "Returned cached intelligence report."
+            if report.get("cached")
+            else "Intelligence report generated."
+        ),
+        "report": enriched,
+    }
+
+
+@app.delete("/api/admin/intelligence/reports/{report_id}")
+def admin_delete_intelligence_report(report_id: int, _: None = Depends(admin_auth.require_admin)):
+    try:
+        intelligence_hub.delete_report(report_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"ok": True, "message": "Report deleted."}
+
+
+@app.get("/api/admin/intelligence/reports/{report_id}/export.json")
+def admin_export_intelligence_json(report_id: int, _: None = Depends(admin_auth.require_admin)):
+    report = intelligence_hub.get_report(report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    enriched = intelligence_hub.enrich_report_with_sources(report)
+    filename = f"intelligence-{report['sector']}-{report['start_date']}-{report['end_date']}.json"
+    return Response(
+        content=json.dumps(enriched, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/admin/intelligence/reports/{report_id}/export.md")
+def admin_export_intelligence_markdown(report_id: int, _: None = Depends(admin_auth.require_admin)):
+    report = intelligence_hub.get_report(report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    filename = f"intelligence-{report['sector']}-{report['start_date']}-{report['end_date']}.md"
+    return Response(
+        content=report.get("report_markdown") or "",
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/admin/intelligence/reports/{report_id}/export.pdf")
+def admin_export_intelligence_pdf(report_id: int, _: None = Depends(admin_auth.require_admin)):
+    """Print-ready HTML export (open and use browser Print → Save as PDF)."""
+    report = intelligence_hub.get_report(report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    enriched = intelligence_hub.enrich_report_with_sources(report)
+    label = enriched.get("sector_label") or enriched["sector"]
+    body = (enriched.get("report_markdown") or "").replace("&", "&amp;").replace("<", "&lt;")
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Intelligence — {label}</title>
+<style>
+body {{ font-family: Georgia, serif; max-width: 800px; margin: 40px auto; color: #0f172a; line-height: 1.55; }}
+h1,h2 {{ font-family: Arial, sans-serif; color: #1e3a5f; }}
+pre {{ white-space: pre-wrap; font-family: Georgia, serif; }}
+@media print {{ button {{ display:none; }} }}
+</style></head><body>
+<button onclick="window.print()">Print / Save as PDF</button>
+<pre>{body}</pre>
+<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),400));</script>
+</body></html>"""
+    return HTMLResponse(html)
 
 
 @app.get("/api/articles")
