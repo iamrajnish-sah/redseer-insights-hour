@@ -3,9 +3,13 @@ sector_keywords.py
 
 Shared sector definitions, keyword lists, and NewsAPI queries for RSS/NewsAPI filtering.
 Edit SECTOR_KEYWORDS to add company names or topics you care about.
+Sectors with dedicated taxonomies (see sector_taxonomies.py) are matched
+semantically instead of by plain keyword lookup.
 """
 
 import re
+
+from sector_taxonomies import TAXONOMIES, taxonomy_matches
 
 SECTOR_LABELS = {
     "e_commerce": "E-commerce",
@@ -176,11 +180,7 @@ SECTOR_KEYWORDS = {
         "blinkit", "zepto", "instamart", "swiggy instamart", "bigbasket", "grofers",
     ],
     "ride_hailing": [],  # matched via is_ride_hailing_relevant() — see below
-    "value_commerce": [
-        "value commerce", "value retail", "budget retail",
-        "dmart", "reliance retail", "vishal mega mart", "spencer's",
-        "d2c brand", "direct to consumer", "kirana", "bharat", "tier 2 retail",
-    ],
+    "value_commerce": [],  # matched via sector_taxonomies.VALUE_COMMERCE_TAXONOMY
     "food_delivery": [
         "food delivery", "foodtech", "online food ordering", "restaurant aggregator",
         "cloud kitchen", "zomato", "swiggy food", "eatfit", "rebel foods",
@@ -231,7 +231,7 @@ NEWSAPI_QUERIES = {
         '("metro strike" OR "metro shutdown" OR "transport strike" OR "board exam" '
         'OR election OR concert OR IPL) AND (Delhi OR Mumbai OR Bengaluru OR Gurugram OR Noida OR India)'
     ),
-    "value_commerce": "value retail India OR DMart OR Reliance Retail OR budget retail India",
+    "value_commerce": "Meesho OR Shopsy OR Snapdeal OR JioMart OR value commerce India OR DMart OR budget ecommerce India",
     "food_delivery": "food delivery India OR Zomato OR Swiggy OR cloud kitchen India",
     "fashion": "fashion retail India OR apparel ecommerce India OR Myntra fashion",
     "bpc": "beauty personal care India OR skincare India OR cosmetics startup India",
@@ -244,7 +244,7 @@ GNEWS_QUERIES = {
     "e_commerce": "Flipkart OR Amazon India OR Myntra OR Meesho",
     "quick_commerce": "Blinkit OR Zepto OR Instamart OR quick commerce",
     "ride_hailing": "Ola OR Rapido OR Uber India OR Namma Yatri OR BluSmart",
-    "value_commerce": "DMart OR Reliance Retail OR value retail India",
+    "value_commerce": "Meesho OR Snapdeal OR JioMart OR DMart OR value commerce India",
     "food_delivery": "Zomato OR Swiggy OR food delivery India",
     "fashion": "fashion retail India OR Myntra OR apparel India",
     "bpc": "skincare India OR cosmetics India OR Mamaearth",
@@ -350,6 +350,10 @@ def match_sectors(title, body="", subtitle=""):
         if sector == "ride_hailing":
             if is_ride_hailing_relevant(title, body, subtitle):
                 matched.append("ride_hailing")
+            continue
+        if sector in TAXONOMIES:
+            if taxonomy_matches(sector, title, body, subtitle):
+                matched.append(sector)
             continue
         for kw in keywords:
             if kw.lower() in haystack:

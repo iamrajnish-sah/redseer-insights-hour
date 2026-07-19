@@ -46,6 +46,7 @@ def _model_fallback_chain():
     return DEFAULT_MODEL_FALLBACK_CHAIN
 
 from sector_keywords import SECTOR_LABELS, GEMINI_SECTORS
+from sector_taxonomies import gemini_taxonomy_rules, gate_ai_sectors
 
 SECTORS = GEMINI_SECTORS
 
@@ -59,7 +60,7 @@ aggregators (Ola, Uber India, Rapido, Namma Yatri, BluSmart, inDrive, Meru, etc.
 regulation/pricing/driver partners, OR urban events that plausibly change ride demand \
 (elections, exams, concerts, IPL, metro/transport strikes or disruption in major cities). \
 Do NOT tag ride_hailing for Ola Electric/scooters, generic mobility, or unrelated "Ola" mentions.
-
+{gemini_taxonomy_rules()}
 For each article given, decide:
 1. is_relevant: true if the article is about, or materially affects, any of these \
 sectors in India (funding, competition, regulation, macro factors, key executives, \
@@ -67,11 +68,12 @@ market entry/exit, technology shifts, etc). General news with no plausible link 
 2. sectors: a list from {SECTORS} that apply (empty list if not relevant). Use \
 "cross_sector" for macro or indirect news (e.g. RBI policy, fuel prices, labour law, GST) \
 that affects multiple sectors but is not one specific category.
-3. summary: a crisp 2-3 sentence summary IN YOUR OWN WORDS (only if relevant; \
+3. sector_confidence: an object mapping each tagged sector to your 0-100 confidence.
+4. summary: a crisp 2-3 sentence summary IN YOUR OWN WORDS (only if relevant; \
 empty string otherwise).
 
 Return ONLY a JSON array, one object per input article, in the same order, with \
-keys: id, is_relevant, sectors, summary. No preamble, no markdown fences."""
+keys: id, is_relevant, sectors, sector_confidence, summary. No preamble, no markdown fences."""
 
 
 def _get_client():
@@ -264,10 +266,29 @@ def classify_batch(rows, batch_size=8, pause_between_calls=2.0, body_chars=500):
                 models_used.append(model_used)
                 print(f"  [info] Using model: {model_used}")
 
+            row_by_id = {r["id"]: r for r in batch}
             for item in parsed:
+                row = row_by_id.get(item.get("id"))
+                sectors = item.get("sectors", []) or []
+                gated = gate_ai_sectors(
+                    sectors,
+                    item.get("sector_confidence") or {},
+                    title=row["title"] if row else "",
+                    body=(row["body"] or "") if row else "",
+                    subtitle=(row["subtitle"] or "") if row else "",
+                )
+                if gated != sectors:
+                    dropped = [s for s in sectors if s not in gated]
+                    print(
+                        f"  [taxonomy] article {item.get('id')}: dropped low-confidence "
+                        f"tag(s) {dropped}"
+                    )
+                    # Still broadly relevant but no confident sector -> Other bucket.
+                    if not gated and item.get("is_relevant"):
+                        gated = ["cross_sector"]
                 results[item["id"]] = {
                     "is_relevant": item.get("is_relevant", False),
-                    "sectors": item.get("sectors", []),
+                    "sectors": gated,
                     "summary": item.get("summary", ""),
                 }
 

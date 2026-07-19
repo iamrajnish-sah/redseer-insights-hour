@@ -27,6 +27,7 @@ from sector_keywords import (
     match_sectors,
     make_summary,
 )
+from sector_taxonomies import TAXONOMIES
 from dedupe import normalize_title
 
 NEWSAPI_EVERYTHING_URL = "https://newsapi.org/v2/everything"
@@ -113,6 +114,11 @@ def _prepare_article(article, query_sector):
     sectors = match_sectors(article.title, article.body, article.subtitle)
     if query_sector == "ride_hailing":
         if "ride_hailing" not in sectors:
+            return None
+    elif query_sector in TAXONOMIES:
+        # Taxonomy sectors (e.g. value_commerce) are never force-tagged:
+        # the semantic classifier decides. Keep only if some sector matched.
+        if not sectors:
             return None
     elif query_sector not in sectors:
         sectors.insert(0, query_sector)
