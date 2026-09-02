@@ -66,15 +66,14 @@
   <div class="top">
     <div>
       <h1 class="brand">Intelligence <em>Hub</em></h1>
-      <p class="sub">Consultant-style sector briefs from already processed news. Does not re-fetch feeds.</p>
+      <p class="sub">Public sector briefs from already processed India news. Generating new briefs still needs admin access.</p>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
       <a class="btn btn-ghost" href="/">← Dashboard</a>
-      <a class="btn btn-ghost" href="/admin/subscribers">Subscribers</a>
     </div>
   </div>
 
-  <div class="panel">
+  <div class="panel" id="generatePanel">
     <p class="panel-title">Generate intelligence</p>
     <div class="filters">
       <div class="field">
@@ -259,8 +258,8 @@ function renderReport(report) {
 
   document.getElementById("reportActions").innerHTML = `
     <button class="btn btn-ghost btn-sm" onclick="generateReport(true)">Regenerate</button>
-    <a class="btn btn-ghost btn-sm" href="${API}/api/admin/intelligence/reports/${report.id}/export.json" onclick="return downloadWithAuth(event, this.href)">Export JSON</a>
-    <a class="btn btn-ghost btn-sm" href="${API}/api/admin/intelligence/reports/${report.id}/export.md" onclick="return downloadWithAuth(event, this.href)">Export Markdown</a>
+    <a class="btn btn-ghost btn-sm" href="${API}/api/intelligence/reports/${report.id}/export.json">Export JSON</a>
+    <a class="btn btn-ghost btn-sm" href="${API}/api/intelligence/reports/${report.id}/export.md">Export Markdown</a>
     <a class="btn btn-ghost btn-sm" href="${API}/api/admin/intelligence/reports/${report.id}/export.pdf" target="_blank" onclick="return openWithAuth(event, this.href)">Export PDF</a>
     <button class="btn btn-danger btn-sm" onclick="deleteReport(${report.id})">Delete</button>
   `;
@@ -447,7 +446,7 @@ async function loadHistory() {
   const sector = document.getElementById("historySector").value;
   const params = new URLSearchParams();
   if (sector) params.set("sector", sector);
-  const resp = await adminFetch(API + "/api/admin/intelligence/reports?" + params.toString());
+  const resp = await fetch(API + "/api/intelligence/reports?" + params.toString());
   const data = await resp.json();
   if (!resp.ok) throw new Error(data.detail || "Failed to load history");
   const rows = data.reports || [];
@@ -468,7 +467,7 @@ async function loadHistory() {
 
 async function viewReport(id) {
   try {
-    const resp = await adminFetch(API + `/api/admin/intelligence/reports/${id}`);
+    const resp = await fetch(API + `/api/intelligence/reports/${id}`);
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || "Failed to load report");
     data.cached = true;
@@ -496,25 +495,16 @@ async function deleteReport(id) {
 }
 
 async function init() {
-  if (!(await ensureAdmin())) {
-    document.body.innerHTML = "<div class='shell'><div class='panel'>Admin access required.</div></div>";
-    return;
-  }
   const today = new Date().toISOString().slice(0, 10);
   document.getElementById("startDate").value = today;
   document.getElementById("endDate").value = today;
 
-  const statusResp = await adminFetch(API + "/api/admin/intelligence/status");
+  const statusResp = await fetch(API + "/api/intelligence/status");
   const status = await statusResp.json();
   fillSectors(status.sectors || await (await fetch(API + "/api/sectors")).json());
   const hint = document.getElementById("statusHint");
-  if (status.configured) {
-    hint.textContent = status.message;
-    hint.className = "hint ok";
-  } else {
-    hint.textContent = status.message;
-    hint.className = "hint error";
-  }
+  hint.textContent = status.message || "Anyone can read published briefs. Generating still needs the admin password.";
+  hint.className = status.configured ? "hint ok" : "hint";
   await loadHistory();
 }
 

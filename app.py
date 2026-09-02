@@ -133,6 +133,14 @@ def serve_intelligence_hub():
     )
 
 
+@app.get("/intelligence")
+def serve_public_intelligence_hub():
+    return FileResponse(
+        os.path.join(STATIC_DIR, "intelligence-hub.html"),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
 @app.get("/api/sectors")
 def get_sectors():
     return SECTOR_LABELS
@@ -374,6 +382,88 @@ def admin_delete_subscriber(subscriber_id: int, _: None = Depends(admin_auth.req
 # ── Intelligence Hub (independent module; does not touch news pipeline) ──
 
 
+@app.get("/api/intelligence/status")
+def public_intelligence_status():
+    return {
+        "configured": intelligence_hub.intelligence_configured(),
+        "message": (
+            "Read published sector briefs below. Generating a new brief needs the admin password."
+            if intelligence_hub.intelligence_configured()
+            else "Intelligence Hub is public for reading. Set INTELLIGENCE_GEMINI_API_KEY to generate new briefs."
+        ),
+        "sectors": SECTOR_LABELS,
+        "public": True,
+    }
+
+
+@app.get("/api/intelligence/reports")
+def public_list_intelligence_reports(sector: str = None, limit: int = 50):
+    try:
+        rows = intelligence_hub.list_reports(sector=sector, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    for row in rows:
+        row["sector_label"] = SECTOR_LABELS.get(row["sector"], row["sector"])
+    return {"reports": rows, "count": len(rows)}
+
+
+@app.get("/api/intelligence/reports/{report_id}")
+def public_get_intelligence_report(report_id: int):
+    report = intelligence_hub.get_report(report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    return intelligence_hub.enrich_report_with_sources(report)
+
+
+@app.get("/api/intelligence/briefs")
+def public_intelligence_briefs(limit: int = 12):
+    """Latest briefs with executive summaries for the public dashboard."""
+    rows = intelligence_hub.list_reports(limit=limit)
+    briefs = []
+    for row in rows:
+        full = intelligence_hub.get_report(row["id"])
+        if not full:
+            continue
+        payload = full.get("report") or {}
+        briefs.append({
+            "id": row["id"],
+            "sector": row["sector"],
+            "sector_label": SECTOR_LABELS.get(row["sector"], row["sector"]),
+            "start_date": row["start_date"],
+            "end_date": row["end_date"],
+            "generated_at": row["generated_at"],
+            "article_count": row["article_count"],
+            "executive_summary": payload.get("executive_summary") or "",
+        })
+    return briefs
+
+
+@app.get("/api/intelligence/reports/{report_id}/export.json")
+def public_export_intelligence_json(report_id: int):
+    report = intelligence_hub.get_report(report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    enriched = intelligence_hub.enrich_report_with_sources(report)
+    filename = f"intelligence-{report['sector']}-{report['start_date']}-{report['end_date']}.json"
+    return JSONResponse(
+        enriched,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/intelligence/reports/{report_id}/export.md")
+def public_export_intelligence_markdown(report_id: int):
+    report = intelligence_hub.get_report(report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    filename = f"intelligence-{report['sector']}-{report['start_date']}-{report['end_date']}.md"
+    return Response(
+        report.get("report_markdown") or "",
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/api/admin/intelligence/status")
 def admin_intelligence_status(_: None = Depends(admin_auth.require_admin)):
     return {
@@ -565,7 +655,9 @@ def feed_summary():
         "last_refresh": status["last_refresh"],
         "stale": status["stale"],
         "refresh_hours": status["refresh_hours"],
-        "cron_schedule": "0 8 * * *",
+        "cron_schedule": status.get("cron_full"),
+        "cron_rss": status.get("cron_rss"),
+        "sources": status.get("sources") or {},
     }
 
 
@@ -599,6 +691,24 @@ def cron_refresh(
         return auto_refresh.try_auto_refresh(force=True)
     except Exception as exc:
         raise HTTPException(500, f"Cron refresh failed: {exc}") from exc
+
+
+@app.get("/api/cron/refresh-rss")
+def cron_refresh_rss(
+    authorization: str = Header(default=None, alias="Authorization"),
+    user_agent: str = Header(default=None, alias="User-Agent"),
+    x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
+    x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
+):
+    """Second daily cron — RSS only (free, high volume)."""
+    if not _cron_allowed(
+        authorization, user_agent, x_vercel_cron_schedule, x_admin_password
+    ):
+        raise HTTPException(401, "Unauthorized")
+    try:
+        return auto_refresh.try_auto_refresh(force=True, rss_only=True)
+    except Exception as exc:
+        raise HTTPException(500, f"RSS cron failed: {exc}") from exc
 
 
 @app.get("/api/admin/storage-status")

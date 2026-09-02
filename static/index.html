@@ -243,6 +243,26 @@
     justify-content: center;
     margin: 8px 0 28px;
   }
+  .intel-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+    margin: 0 0 18px;
+  }
+  .intel-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    box-shadow: var(--shadow-sm);
+    text-decoration: none;
+    color: inherit;
+    display: block;
+  }
+  .intel-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+  .intel-card h3 { margin: 0 0 6px; font-size: 0.95rem; color: var(--primary); }
+  .intel-card p { margin: 0; color: var(--text-muted); font-size: 0.84rem; line-height: 1.45; }
+  .intel-card .intel-meta { font-size: 0.72rem; font-weight: 600; color: var(--teal); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
   .btn.loading { pointer-events: none; opacity: 0.7; }
 
   .field-label {
@@ -813,6 +833,7 @@
       <p class="brand-tagline">Daily sector intelligence for India — curated news delivered to the right team.</p>
     </div>
     <div class="topbar-actions">
+      <a class="btn btn-ghost" href="/intelligence">🧠 Intelligence Hub</a>
       <button type="button" class="btn btn-teal" onclick="openSubscribeModal()">✉ Subscribe</button>
       <div class="date-pill" id="todayDate"></div>
     </div>
@@ -842,7 +863,7 @@
       <button class="btn btn-teal" id="btnGemini" onclick="processArticles()">✦ Process with Gemini</button>
       <button class="btn btn-email" id="btnEmail" onclick="openEmailCampaignModal()">✉ Send Email</button>
       <a class="btn btn-ghost btn-sm" href="/admin/subscribers">👥 Subscribers</a>
-      <a class="btn btn-ghost btn-sm" href="/admin/intelligence">🧠 Intelligence Hub</a>
+      <a class="btn btn-ghost btn-sm" href="/intelligence">🧠 Intelligence Hub</a>
       <button class="btn btn-ghost btn-sm" id="btnRefilterRh" onclick="refilterRideHailing()">↺ Refilter ride hailing</button>
       <button class="btn btn-ghost btn-sm" id="btnDedupe" onclick="removeDuplicates()">↺ Remove duplicates</button>
       <button class="btn btn-ghost btn-sm" id="btnPersist" onclick="saveToCloud()">☁ Save to Cloud</button>
@@ -880,6 +901,7 @@
   </div>
 
   <nav class="sector-nav" id="tabs"></nav>
+  <div class="intel-strip" id="intelStrip"></div>
 
   <main>
     <div class="grid" id="grid"></div>
@@ -1083,6 +1105,7 @@ async function init() {
   syncDateFilterButtons();
   await loadFeedSummary();
   await loadArticles();
+  await loadIntelligenceBriefs();
   await maybeAutoRefresh();
 }
 
@@ -1228,7 +1251,8 @@ function filterLabel() {
 
 function formatRefreshTime(iso) {
   if (!iso) return "not yet";
-  const dt = new Date(iso.includes("T") ? iso : iso.replace(" ", "T"));
+  const normalized = /Z|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + "Z";
+  const dt = new Date(normalized);
   if (Number.isNaN(dt.getTime())) return iso;
   return dt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
@@ -1238,9 +1262,56 @@ function updateFeedMeta() {
   if (!el) return;
   const n = feedSummary.relevant || 0;
   const when = formatRefreshTime(feedSummary.last_refresh);
+  const sources = feedSummary.sources || {};
+  const parts = [];
+  if (sources.rss) parts.push(`RSS every ${sources.rss.refresh_hours || 2}h (free)`);
+  if (sources.gnews && sources.gnews.configured) parts.push(`GNews every ${sources.gnews.refresh_hours || 4}h`);
+  if (sources.newsapi && sources.newsapi.configured) parts.push(`NewsAPI every ${sources.newsapi.refresh_hours || 6}h`);
+  const cadence = parts.length
+    ? parts.join(" · ")
+    : `RSS every ${feedSummary.refresh_hours || 2} hours; paid APIs less often`;
   el.textContent = n
-    ? `${n.toLocaleString()} relevant articles stored · feeds auto-update daily at 08:00 UTC and whenever news is older than ${feedSummary.refresh_hours || 4} hours · last refresh ${when}`
+    ? `${n.toLocaleString()} relevant articles stored · ${cadence} · crons 08:00 & 14:00 UTC · last refresh ${when}`
     : "Waiting for the first feed refresh.";
+}
+
+function cardSummary(a) {
+  const title = (a.title || "").trim();
+  let text = (a.summary || "").trim() || (a.body || "").trim();
+  if (!text) return "";
+  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const titleKey = norm(title).slice(0, 48);
+  if (titleKey && norm(text).startsWith(titleKey) && (a.body || "").trim().length > text.length + 40) {
+    text = (a.body || "").trim();
+  }
+  if (text.length > 280) text = text.slice(0, 277).replace(/\s+\S*$/, "") + "...";
+  return text;
+}
+
+async function loadIntelligenceBriefs() {
+  const wrap = document.getElementById("intelStrip");
+  if (!wrap) return;
+  try {
+    const briefs = await (await fetch(API + "/api/intelligence/briefs?limit=6")).json();
+    if (!Array.isArray(briefs) || !briefs.length) {
+      wrap.innerHTML = `<a class="intel-card" href="/intelligence">
+        <div class="intel-meta">Intelligence Hub</div>
+        <h3>Sector briefs are public</h3>
+        <p>Open Intelligence Hub to read consultant-style summaries. Generating a new brief still uses the admin password and the Intelligence Gemini key.</p>
+      </a>`;
+      return;
+    }
+    wrap.innerHTML = briefs.slice(0, 4).map((b) => {
+      const summary = (b.executive_summary || "Open for the full sector brief.").slice(0, 220);
+      return `<a class="intel-card" href="/intelligence">
+        <div class="intel-meta">${escapeHtml(b.sector_label || b.sector)} · ${escapeHtml(b.start_date || "")}</div>
+        <h3>${escapeHtml(b.sector_label || "Sector brief")}</h3>
+        <p>${escapeHtml(summary)}</p>
+      </a>`;
+    }).join("");
+  } catch (_) {
+    wrap.innerHTML = "";
+  }
 }
 
 async function toggleBackendPanel() {
@@ -1619,7 +1690,7 @@ function renderArticles() {
       <div class="card-body">
         <div class="card-badges">${newPill}${badges}</div>
         <h2 class="card-headline">${displayText(a.title)}</h2>
-        <p class="card-summary">${displayText(a.summary || "")}</p>
+        <p class="card-summary">${displayText(cardSummary(a))}</p>
       </div>
       <div class="card-footer">
         <span class="card-meta-text">${displayText(sourceLabel)} · ${a.pub_date}</span>
