@@ -554,6 +554,21 @@ def get_articles(sector: str = None, pub_date: str = None, search: str = None, d
     return articles
 
 
+@app.get("/api/feed-summary")
+def feed_summary():
+    """Public counts + last auto-refresh time (no admin password)."""
+    status = auto_refresh.refresh_status()
+    stats = database.get_stats()
+    return {
+        "relevant": stats["relevant"],
+        "total": stats["total"],
+        "last_refresh": status["last_refresh"],
+        "stale": status["stale"],
+        "refresh_hours": status["refresh_hours"],
+        "cron_schedule": "0 8 * * *",
+    }
+
+
 @app.get("/api/auto-refresh/status")
 def auto_refresh_status():
     return auto_refresh.refresh_status()
