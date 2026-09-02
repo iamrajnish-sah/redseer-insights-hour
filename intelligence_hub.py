@@ -127,11 +127,36 @@ def _model_chain():
     if custom:
         return [m.strip() for m in custom.split(",") if m.strip()]
     return [
+        "gemini-3-flash-preview",
+        "gemini-3.1-flash-lite",
+        "gemini-3.1-pro-preview",
         "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
         "gemini-2.0-flash",
-        "gemini-2.5-pro",
     ]
+
+
+def _should_try_next_model(exc):
+    msg = str(exc).lower()
+    return any(
+        token in msg
+        for token in (
+            "429", "resource_exhausted", "quota", "rate limit", "rate_limit",
+            "404", "not_found", "not found", "is not supported", "is not found",
+            "no longer available", "please update your code",
+        )
+    )
+
+
+def friendly_gemini_error(exc):
+    text = str(exc)
+    compact = re.sub(r"\s+", " ", text).strip()
+    if "no longer available" in compact.lower() or "not_found" in compact.lower():
+        return (
+            "Gemini rejected the old model IDs. This app now uses Gemini 3 Flash / 3.1 Pro. "
+            "Retry Generate Intelligence. "
+            f"({compact[:220]})"
+        )
+    return compact[:400]
 
 
 def _batch_size():
@@ -206,17 +231,6 @@ def _parse_json_response(text):
     return _normalize_report(json.loads(text))
 
 
-def _should_try_next_model(exc):
-    msg = str(exc).lower()
-    return any(
-        token in msg
-        for token in (
-            "429", "resource_exhausted", "quota", "rate limit", "rate_limit",
-            "404", "not_found", "not found", "is not supported", "is not found",
-        )
-    )
-
-
 def _call_intelligence_model(client, system_prompt, user_payload):
     last_error = None
     for model in _model_chain():
@@ -233,7 +247,9 @@ def _call_intelligence_model(client, system_prompt, user_payload):
                 raise
             print(f"  [intelligence] {model} failed — trying next model ...")
             time.sleep(0.8)
-    raise last_error or RuntimeError("All Intelligence Gemini models failed")
+    raise RuntimeError(
+        friendly_gemini_error(last_error or RuntimeError("All Intelligence Gemini models failed"))
+    )
 
 
 def validate_sector(sector):
@@ -470,6 +486,24 @@ def get_cached_report(sector, start_date, end_date):
             (sector, start_date, end_date),
         ).fetchone()
     return _row_to_report(row)
+
+
+def reports_for_period(sector, start_date, end_date=None):
+    """Public lookup: exact match first, then any brief overlapping the dates."""
+    sector = validate_sector(sector)
+    start_date, end_date = validate_dates(start_date, end_date)
+    exact = get_cached_report(sector, start_date, end_date)
+    with database.get_conn() as conn:
+        rows = conn.execute(
+            """SELECT * FROM intelligence_reports
+               WHERE sector = ? AND start_date <= ? AND end_date >= ?
+               ORDER BY generated_at DESC, id DESC""",
+            (sector, end_date, start_date),
+        ).fetchall()
+    reports = [_row_to_report(row) for row in rows]
+    if exact:
+        reports = [exact] + [r for r in reports if r.get("id") != exact.get("id")]
+    return reports
 
 
 def get_report(report_id):

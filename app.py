@@ -415,7 +415,21 @@ def public_get_intelligence_report(report_id: int):
     return intelligence_hub.enrich_report_with_sources(report)
 
 
-@app.get("/api/intelligence/briefs")
+@app.get("/api/intelligence/lookup")
+def public_lookup_intelligence(sector: str, start_date: str, end_date: str = None):
+    """Anyone can read a processed brief for a sector + date range."""
+    try:
+        rows = intelligence_hub.reports_for_period(sector, start_date, end_date)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    reports = [intelligence_hub.enrich_report_with_sources(row) for row in rows]
+    return {
+        "sector": sector,
+        "start_date": start_date,
+        "end_date": end_date or start_date,
+        "count": len(reports),
+        "reports": reports,
+    }
 def public_intelligence_briefs(limit: int = 12):
     """Latest briefs with executive summaries for the public dashboard."""
     rows = intelligence_hub.list_reports(limit=limit)
@@ -562,7 +576,10 @@ async def admin_generate_intelligence(
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(500, f"Intelligence generation failed: {exc}") from exc
+        raise HTTPException(
+            500,
+            f"Intelligence generation failed: {intelligence_hub.friendly_gemini_error(exc)}",
+        ) from exc
 
     enriched = intelligence_hub.enrich_report_with_sources(report)
     return {

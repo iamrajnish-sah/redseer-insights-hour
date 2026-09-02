@@ -57,7 +57,10 @@
   .source-item a:hover { text-decoration:underline; }
   .actions { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 18px; }
   .empty { text-align:center; color:var(--text-muted); padding:28px 12px; }
-  .loading { display:inline-block; width:14px; height:14px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; }
+  .admin-only { display: none; }
+  .admin-only.visible { display: block; }
+  .admin-inline { display: none; }
+  body.is-admin .admin-inline { display: inline-flex; }
   @keyframes spin { to { transform:rotate(360deg); } }
 </style>
 </head>
@@ -66,15 +69,16 @@
   <div class="top">
     <div>
       <h1 class="brand">Intelligence <em>Hub</em></h1>
-      <p class="sub">Public sector briefs from already processed India news. Generating new briefs still needs admin access.</p>
+      <p class="sub">Anyone can view processed briefs by sector and date. Only an admin can generate new ones.</p>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
       <a class="btn btn-ghost" href="/">← Dashboard</a>
+      <button class="btn btn-primary" id="btnUnlock" type="button" onclick="unlockAdmin()">Unlock admin</button>
     </div>
   </div>
 
-  <div class="panel" id="generatePanel">
-    <p class="panel-title">Generate intelligence</p>
+  <div class="panel">
+    <p class="panel-title">View processed intelligence</p>
     <div class="filters">
       <div class="field">
         <label for="sectorSelect">Sector</label>
@@ -95,11 +99,19 @@
         <label for="endDate">End date</label>
         <input class="input" type="date" id="endDate">
       </div>
-      <button class="btn btn-teal" id="btnPreview" onclick="previewArticles()">Preview articles</button>
+      <button class="btn btn-teal" id="btnShow" onclick="showBrief()">Show brief</button>
+    </div>
+    <div class="hint" id="statusHint">Pick a sector and date to read a published brief.</div>
+    <div class="hint" id="previewHint"></div>
+  </div>
+
+  <div class="panel admin-only" id="generatePanel">
+    <p class="panel-title">Generate intelligence (admin only)</p>
+    <div class="filters">
+      <button class="btn btn-ghost" id="btnPreview" onclick="previewArticles()">Preview articles</button>
       <button class="btn btn-primary" id="btnGenerate" onclick="generateReport(false)">Generate Intelligence</button>
     </div>
-    <div class="hint" id="statusHint">Checking Intelligence API key...</div>
-    <div class="hint" id="previewHint"></div>
+    <div class="hint">Uses the same sector and dates above. Visitors cannot see or run this.</div>
   </div>
 
   <div class="panel" id="reportPanel" style="display:none;">
@@ -141,6 +153,7 @@ const API = "";
 let adminPassword = sessionStorage.getItem("adminPassword") || "";
 let SECTORS = {};
 let currentReport = null;
+let isAdmin = false;
 
 function showToast(msg, isError=false) {
   const el = document.getElementById("toast");
@@ -165,6 +178,29 @@ async function adminFetch(url, opts={}) {
     resp = await fetch(url, opts);
   }
   return resp;
+}
+
+function setAdminUi(on) {
+  isAdmin = Boolean(on);
+  document.body.classList.toggle("is-admin", isAdmin);
+  const panel = document.getElementById("generatePanel");
+  if (panel) panel.classList.toggle("visible", isAdmin);
+  const unlock = document.getElementById("btnUnlock");
+  if (unlock) {
+    unlock.style.display = isAdmin ? "none" : "inline-flex";
+  }
+  if (currentReport) renderReport(currentReport);
+  loadHistory().catch(() => {});
+}
+
+async function unlockAdmin() {
+  const ok = await ensureAdmin();
+  if (!ok) {
+    showToast("Admin password required to generate briefs.", true);
+    return;
+  }
+  setAdminUi(true);
+  showToast("Admin unlocked. You can generate briefs.");
 }
 
 async function ensureAdmin() {
@@ -256,12 +292,17 @@ function renderReport(report) {
   document.getElementById("reportMeta").textContent =
     `${label} · ${report.start_date} → ${report.end_date} · ${report.article_count || 0} articles · ${report.cached ? "cached" : "fresh"} · ${report.generated_at || ""}`;
 
+  const regen = isAdmin
+    ? `<button class="btn btn-ghost btn-sm" onclick="generateReport(true)">Regenerate</button>`
+    : "";
+  const del = isAdmin
+    ? `<button class="btn btn-danger btn-sm" onclick="deleteReport(${report.id})">Delete</button>`
+    : "";
   document.getElementById("reportActions").innerHTML = `
-    <button class="btn btn-ghost btn-sm" onclick="generateReport(true)">Regenerate</button>
+    ${regen}
     <a class="btn btn-ghost btn-sm" href="${API}/api/intelligence/reports/${report.id}/export.json">Export JSON</a>
     <a class="btn btn-ghost btn-sm" href="${API}/api/intelligence/reports/${report.id}/export.md">Export Markdown</a>
-    <a class="btn btn-ghost btn-sm" href="${API}/api/admin/intelligence/reports/${report.id}/export.pdf" target="_blank" onclick="return openWithAuth(event, this.href)">Export PDF</a>
-    <button class="btn btn-danger btn-sm" onclick="deleteReport(${report.id})">Delete</button>
+    ${del}
   `;
 
   const r = report.report || {};
@@ -389,6 +430,46 @@ async function openWithAuth(event, url) {
   return false;
 }
 
+async function showBrief() {
+  const dates = selectedDates();
+  const sector = document.getElementById("sectorSelect").value;
+  if (!dates.start_date) { showToast("Pick a date first.", true); return; }
+  setLoading("btnShow", true);
+  document.getElementById("previewHint").textContent = "";
+  try {
+    const params = new URLSearchParams({
+      sector,
+      start_date: dates.start_date,
+      end_date: dates.end_date,
+    });
+    const resp = await fetch(API + "/api/intelligence/lookup?" + params.toString());
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Lookup failed");
+    const reports = data.reports || [];
+    if (!reports.length) {
+      document.getElementById("reportPanel").style.display = "none";
+      currentReport = null;
+      document.getElementById("previewHint").textContent =
+        `No processed brief yet for ${SECTORS[sector] || sector} (${dates.start_date} → ${dates.end_date}). An admin must generate it.`;
+      showToast("No processed intelligence for these dates yet.", true);
+      return;
+    }
+    reports[0].cached = true;
+    renderReport(reports[0]);
+    if (reports.length > 1) {
+      document.getElementById("previewHint").textContent =
+        `Showing the latest of ${reports.length} briefs in this range. Older ones are in History.`;
+    } else {
+      document.getElementById("previewHint").textContent =
+        `Published brief for ${SECTORS[sector] || sector}.`;
+    }
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    setLoading("btnShow", false);
+  }
+}
+
 async function previewArticles() {
   const dates = selectedDates();
   const sector = document.getElementById("sectorSelect").value;
@@ -414,6 +495,11 @@ async function previewArticles() {
 }
 
 async function generateReport(force=false) {
+  if (!(await ensureAdmin())) {
+    showToast("Only an admin can generate intelligence.", true);
+    return;
+  }
+  setAdminUi(true);
   const dates = selectedDates();
   const sector = document.getElementById("sectorSelect").value;
   if (!dates.start_date) { showToast("Pick a date first.", true); return; }
@@ -460,7 +546,7 @@ async function loadHistory() {
       <td><span class="badge">${esc(row.status)}</span></td>
       <td>
         <button class="btn btn-ghost btn-sm" onclick="viewReport(${row.id})">View</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteReport(${row.id})">Delete</button>
+        ${isAdmin ? `<button class="btn btn-danger btn-sm" onclick="deleteReport(${row.id})">Delete</button>` : ""}
       </td>
     </tr>`).join("");
 }
@@ -503,8 +589,15 @@ async function init() {
   const status = await statusResp.json();
   fillSectors(status.sectors || await (await fetch(API + "/api/sectors")).json());
   const hint = document.getElementById("statusHint");
-  hint.textContent = status.message || "Anyone can read published briefs. Generating still needs the admin password.";
-  hint.className = status.configured ? "hint ok" : "hint";
+  hint.textContent = "Anyone can read a published brief for the sector and dates they pick. Generating is admin-only.";
+  hint.className = "hint";
+  if (adminPassword) {
+    const verify = await fetch(API + "/api/admin/verify", {
+      method: "POST",
+      headers: { "X-Admin-Password": adminPassword },
+    });
+    if (verify.ok) setAdminUi(true);
+  }
   await loadHistory();
 }
 
