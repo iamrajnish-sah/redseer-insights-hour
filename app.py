@@ -6,8 +6,9 @@ FastAPI backend for the news dashboard. Wraps the existing pipeline modules
 database) behind a small JSON API, and serves the frontend.
 
 Run:
-    export GEMINIAPIKEY=...
-    export NEWSAPIKEY=...     # optional
+    export GEMINIAPIKEY=...          # news + newspaper
+    export NVIDIA_API_KEY=...        # Intelligence Hub generate
+    export NEWSAPIKEY=...            # optional
     uvicorn app:app --reload --port 8000
 
 Then open http://localhost:8000
@@ -387,9 +388,9 @@ def public_intelligence_status():
     return {
         "configured": intelligence_hub.intelligence_configured(),
         "message": (
-            "Read published sector briefs below. Generating a new brief needs the admin password."
+            "Read published sector briefs below. Generating a new brief needs the admin password and NVIDIA_API_KEY."
             if intelligence_hub.intelligence_configured()
-            else "Intelligence Hub is public for reading. Set INTELLIGENCE_GEMINI_API_KEY to generate new briefs."
+            else "Intelligence Hub is public for reading. Set NVIDIA_API_KEY in Vercel to generate new briefs."
         ),
         "sectors": SECTOR_LABELS,
         "public": True,
@@ -430,6 +431,9 @@ def public_lookup_intelligence(sector: str, start_date: str, end_date: str = Non
         "count": len(reports),
         "reports": reports,
     }
+
+
+@app.get("/api/intelligence/briefs")
 def public_intelligence_briefs(limit: int = 12):
     """Latest briefs with executive summaries for the public dashboard."""
     rows = intelligence_hub.list_reports(limit=limit)
@@ -483,9 +487,9 @@ def admin_intelligence_status(_: None = Depends(admin_auth.require_admin)):
     return {
         "configured": intelligence_hub.intelligence_configured(),
         "message": (
-            "Intelligence Hub ready."
+            "Intelligence Hub ready (NVIDIA)."
             if intelligence_hub.intelligence_configured()
-            else "Set INTELLIGENCE_GEMINI_API_KEY (separate from NEWS Gemini key)."
+            else "Set NVIDIA_API_KEY for Intelligence Hub (separate from GEMINIAPIKEY used for news)."
         ),
         "sectors": SECTOR_LABELS,
     }
@@ -578,7 +582,7 @@ async def admin_generate_intelligence(
     except Exception as exc:
         raise HTTPException(
             500,
-            f"Intelligence generation failed: {intelligence_hub.friendly_gemini_error(exc)}",
+            f"Intelligence generation failed: {intelligence_hub.friendly_intelligence_error(exc)}",
         ) from exc
 
     enriched = intelligence_hub.enrich_report_with_sources(report)

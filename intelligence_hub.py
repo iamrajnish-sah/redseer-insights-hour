@@ -3,9 +3,14 @@ intelligence_hub.py
 
 Independent consultant-style intelligence reports built on top of already
 processed news articles. Does NOT fetch news, does NOT touch the news Gemini
-pipeline (classify_and_summarize), and uses a separate API key:
+pipeline (classify_and_summarize / newspaper_parser).
 
-  INTELLIGENCE_GEMINI_API_KEY  (or INTELLIGENCE_GEMINIAPIKEY)
+News processing keeps GEMINIAPIKEY.
+Intelligence Hub uses a separate NVIDIA NIM key:
+
+  NVIDIA_API_KEY  (aliases: NVIDIAAPIKEY, INTELLIGENCE_NVIDIA_API_KEY)
+
+Never falls back to the Gemini news key.
 
 Reads articles from the existing SQLite store and writes only to
 intelligence_reports.
@@ -16,13 +21,11 @@ from __future__ import annotations
 import json
 import os
 import re
-import ssl
 import time
 from datetime import datetime
 
 import certifi
-from google import genai
-from google.genai import types
+import requests
 
 import database
 from sector_keywords import SECTOR_LABELS, normalize_sector_tags
@@ -110,10 +113,21 @@ def _now_iso():
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
 
+NVIDIA_DEFAULT_BASE = "https://integrate.api.nvidia.com/v1"
+NVIDIA_DEFAULT_MODELS = (
+    "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    "nvidia/llama-3.3-nemotron-super-49b-v1",
+    "meta/llama-3.3-70b-instruct",
+    "meta/llama-3.1-70b-instruct",
+)
+
+
 def intelligence_api_key():
+    """NVIDIA key only — never the news Gemini key."""
     return (
-        os.environ.get("INTELLIGENCE_GEMINI_API_KEY")
-        or os.environ.get("INTELLIGENCE_GEMINIAPIKEY")
+        os.environ.get("NVIDIA_API_KEY")
+        or os.environ.get("NVIDIAAPIKEY")
+        or os.environ.get("INTELLIGENCE_NVIDIA_API_KEY")
         or ""
     ).strip()
 
@@ -123,40 +137,79 @@ def intelligence_configured():
 
 
 def _model_chain():
-    custom = os.environ.get("INTELLIGENCE_GEMINI_MODELS", "").strip()
+    custom = (
+        os.environ.get("NVIDIA_MODELS")
+        or os.environ.get("NVIDIA_MODEL")
+        or os.environ.get("INTELLIGENCE_NVIDIA_MODELS")
+        or ""
+    ).strip()
     if custom:
         return [m.strip() for m in custom.split(",") if m.strip()]
-    return [
-        "gemini-3-flash-preview",
-        "gemini-3.1-flash-lite",
-        "gemini-3.1-pro-preview",
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-    ]
+    return list(NVIDIA_DEFAULT_MODELS)
+
+
+def _nvidia_base_url():
+    return (
+        os.environ.get("NVIDIA_API_BASE")
+        or os.environ.get("NVIDIA_BASE_URL")
+        or NVIDIA_DEFAULT_BASE
+    ).rstrip("/")
+
+
+def _ssl_verify():
+    flag = (
+        os.environ.get("NVIDIA_SSL_VERIFY")
+        or os.environ.get("GEMINI_SSL_VERIFY")
+        or ""
+    ).lower()
+    if flag in ("0", "false", "no"):
+        return False
+    return (
+        os.environ.get("SSL_CERT_FILE")
+        or os.environ.get("REQUESTS_CA_BUNDLE")
+        or certifi.where()
+    )
 
 
 def _should_try_next_model(exc):
     msg = str(exc).lower()
+    if any(token in msg for token in ("401", "403", "invalid api key", "unauthorized")):
+        return False
     return any(
         token in msg
         for token in (
             "429", "resource_exhausted", "quota", "rate limit", "rate_limit",
             "404", "not_found", "not found", "is not supported", "is not found",
-            "no longer available", "please update your code",
+            "no longer available", "please update your code", "model_not_found",
+            "does not exist", "unknown model", "503", "502", "overloaded",
         )
     )
 
 
-def friendly_gemini_error(exc):
+def friendly_intelligence_error(exc):
     text = str(exc)
     compact = re.sub(r"\s+", " ", text).strip()
-    if "no longer available" in compact.lower() or "not_found" in compact.lower():
+    lower = compact.lower()
+    if "401" in lower or "unauthorized" in lower or "invalid api key" in lower:
         return (
-            "Gemini rejected the old model IDs. This app now uses Gemini 3 Flash / 3.1 Pro. "
-            "Retry Generate Intelligence. "
+            "NVIDIA rejected the API key. Set NVIDIA_API_KEY in Vercel environment "
+            "variables (build.nvidia.com). "
+            f"({compact[:220]})"
+        )
+    if "not set" in lower or "not configured" in lower:
+        return compact[:400]
+    if "404" in lower or "not_found" in lower or "unknown model" in lower:
+        return (
+            "NVIDIA rejected the model ID. Set NVIDIA_MODELS to a comma-separated "
+            "list from build.nvidia.com, then retry Generate Intelligence. "
             f"({compact[:220]})"
         )
     return compact[:400]
+
+
+def friendly_gemini_error(exc):
+    """Backward-compatible alias used by app.py error handling."""
+    return friendly_intelligence_error(exc)
 
 
 def _batch_size():
@@ -167,23 +220,16 @@ def _get_client():
     api_key = intelligence_api_key()
     if not api_key:
         raise RuntimeError(
-            "INTELLIGENCE_GEMINI_API_KEY is not set. Add it in environment variables "
-            "to use Intelligence Hub (news pipeline Gemini key is not used)."
+            "NVIDIA_API_KEY is not set. Add it in Vercel environment variables "
+            "to generate Intelligence Hub briefs (news pipeline Gemini key is not used)."
         )
-    if os.environ.get("GEMINI_SSL_VERIFY", "").lower() in ("0", "false", "no"):
-        verify = False
-    else:
-        cafile = (
-            os.environ.get("SSL_CERT_FILE")
-            or os.environ.get("REQUESTS_CA_BUNDLE")
-            or certifi.where()
-        )
-        verify = ssl.create_default_context(cafile=cafile)
-    http_options = types.HttpOptions(
-        client_args={"verify": verify},
-        async_client_args={"verify": verify},
-    )
-    return genai.Client(api_key=api_key, http_options=http_options)
+    return {
+        "api_key": api_key,
+        "base_url": _nvidia_base_url(),
+        "verify": _ssl_verify(),
+        "timeout": int(os.environ.get("NVIDIA_TIMEOUT", "120")),
+        "max_tokens": int(os.environ.get("NVIDIA_MAX_TOKENS", "8192")),
+    }
 
 
 def _empty_report():
@@ -227,28 +273,110 @@ def _normalize_report(payload):
 
 def _parse_json_response(text):
     text = (text or "").strip()
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"</?think>", "", text, flags=re.IGNORECASE)
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return _normalize_report(json.loads(text))
+    try:
+        return _normalize_report(json.loads(text))
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            return _normalize_report(json.loads(text[start:end + 1]))
+        raise
+
+
+def _extract_message_text(payload):
+    choices = payload.get("choices") or []
+    if not choices:
+        raise RuntimeError("NVIDIA API returned no choices")
+    message = (choices[0] or {}).get("message") or {}
+    content = message.get("content")
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict):
+                parts.append(str(part.get("text") or ""))
+            else:
+                parts.append(str(part))
+        content = "".join(parts)
+    if not (content or "").strip():
+        content = message.get("reasoning_content") or ""
+    if not (content or "").strip():
+        raise RuntimeError("NVIDIA API returned an empty message")
+    return content
+
+
+def _is_nemotron(model):
+    return "nemotron" in (model or "").lower()
+
+
+def _nvidia_chat(client, model, system_prompt, user_payload):
+    system_content = system_prompt
+    if _is_nemotron(model):
+        system_content = "detailed thinking off\n\n" + system_prompt
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+        ],
+        "temperature": 0.2 if not _is_nemotron(model) else 0,
+        "top_p": 0.9,
+        "max_tokens": client["max_tokens"],
+        "stream": False,
+    }
+    if _is_nemotron(model):
+        body["chat_template_kwargs"] = {"enable_thinking": False}
+
+    url = f"{client['base_url']}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {client['api_key']}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    resp = requests.post(
+        url,
+        headers=headers,
+        json=body,
+        timeout=client["timeout"],
+        verify=client["verify"],
+    )
+    if resp.status_code == 400 and "chat_template_kwargs" in body:
+        body.pop("chat_template_kwargs", None)
+        resp = requests.post(
+            url,
+            headers=headers,
+            json=body,
+            timeout=client["timeout"],
+            verify=client["verify"],
+        )
+    if resp.status_code >= 400:
+        detail = (resp.text or "").strip().replace("\n", " ")
+        raise RuntimeError(f"NVIDIA API {resp.status_code} for {model}: {detail[:400]}")
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        raise RuntimeError(f"NVIDIA API returned non-JSON for {model}") from exc
+    return _extract_message_text(payload)
 
 
 def _call_intelligence_model(client, system_prompt, user_payload):
     last_error = None
     for model in _model_chain():
         try:
-            resp = client.models.generate_content(
-                model=model,
-                contents=[system_prompt, json.dumps(user_payload, ensure_ascii=False)],
-                config={"response_mime_type": "application/json"},
-            )
-            return _parse_json_response(resp.text), model
+            text = _nvidia_chat(client, model, system_prompt, user_payload)
+            return _parse_json_response(text), model
         except Exception as exc:
             last_error = exc
             if not _should_try_next_model(exc):
                 raise
-            print(f"  [intelligence] {model} failed — trying next model ...")
+            print(f"  [intelligence] {model} failed — trying next NVIDIA model ...")
             time.sleep(0.8)
     raise RuntimeError(
-        friendly_gemini_error(last_error or RuntimeError("All Intelligence Gemini models failed"))
+        friendly_intelligence_error(
+            last_error or RuntimeError("All NVIDIA Intelligence models failed")
+        )
     )
 
 
@@ -609,8 +737,8 @@ def generate_or_get_report(sector, start_date, end_date=None, force=False, gener
 
     if not intelligence_configured():
         raise RuntimeError(
-            "INTELLIGENCE_GEMINI_API_KEY is not configured. "
-            "Intelligence Hub uses a separate key from the news Gemini pipeline."
+            "NVIDIA_API_KEY is not configured. "
+            "Intelligence Hub uses the NVIDIA key; news processing still uses GEMINIAPIKEY."
         )
 
     articles = fetch_sector_articles(sector, start_date, end_date)
