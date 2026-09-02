@@ -21,6 +21,7 @@ Copy `.env.example` to `.env`. Important variables:
 | Variable | Purpose |
 |----------|---------|
 | `ADMIN_PASSWORD` | Protects Backend Management (required on public hosting) |
+| `CRON_SECRET` | Protects `/api/cron/refresh` (recommended on Vercel) |
 | `GEMINIAPIKEY` | Gemini classification + PDF/image newspaper reading |
 | `NEWSAPIKEY` | NewsAPI ingestion (optional) |
 | `SMTP_*` / `EMAIL_FROM` | Send sector email digests |

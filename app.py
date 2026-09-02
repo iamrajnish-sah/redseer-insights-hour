@@ -46,6 +46,41 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 
+@app.middleware("http")
+async def allow_head_requests(request: Request, call_next):
+    """Uptime checks send HEAD; FastAPI GET routes otherwise return 405."""
+    is_head = request.method == "HEAD"
+    if is_head:
+        request.scope["method"] = "GET"
+    response = await call_next(request)
+    if not is_head:
+        return response
+    body = getattr(response, "body", None)
+    if body is None and hasattr(response, "body_iterator"):
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk)
+        body = b"".join(chunks)
+    headers = dict(response.headers)
+    headers["content-length"] = str(len(body or b""))
+    return Response(status_code=response.status_code, headers=headers)
+
+
+def _cron_allowed(authorization, user_agent, cron_schedule, admin_password):
+    """Allow Vercel Cron, CRON_SECRET bearer, or admin password. Open only in local dev."""
+    secret = (os.environ.get("CRON_SECRET") or "").strip()
+    if secret and (authorization or "") == f"Bearer {secret}":
+        return True
+    if admin_auth.admin_password_configured() and admin_auth.verify_admin_password(admin_password):
+        return True
+    ua = (user_agent or "").lower()
+    if ua.startswith("vercel-cron/"):
+        return True
+    if cron_schedule and os.environ.get("VERCEL"):
+        return True
+    return not os.environ.get("VERCEL")
+
+
 @app.on_event("startup")
 def on_startup():
     restore_db(database.DB_PATH)
@@ -534,10 +569,16 @@ def auto_refresh_now():
 
 
 @app.get("/api/cron/refresh")
-def cron_refresh(authorization: str = Header(default=None, alias="Authorization")):
-    """Vercel Cron hits this 4× daily to keep news current."""
-    cron_secret = os.environ.get("CRON_SECRET")
-    if cron_secret and authorization != f"Bearer {cron_secret}":
+def cron_refresh(
+    authorization: str = Header(default=None, alias="Authorization"),
+    user_agent: str = Header(default=None, alias="User-Agent"),
+    x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
+    x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
+):
+    """Vercel Cron hits this daily to keep news current."""
+    if not _cron_allowed(
+        authorization, user_agent, x_vercel_cron_schedule, x_admin_password
+    ):
         raise HTTPException(401, "Unauthorized")
     try:
         return auto_refresh.try_auto_refresh(force=True)

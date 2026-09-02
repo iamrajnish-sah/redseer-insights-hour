@@ -21,13 +21,15 @@ from dataclasses import dataclass, field
 
 from sector_keywords import match_sectors, make_summary, GOOGLE_NEWS_QUERIES, is_india_relevant
 
+# Browser-like UA: Business Standard (Akamai) returns 403 to custom bot UAs.
 RSS_USER_AGENT = (
-    "RedseerInsightHour/1.0 "
-    "(+https://github.com/iamrajnish-sah/redseer-insights-hour)"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
 RSS_HEADERS = {
     "User-Agent": RSS_USER_AGENT,
     "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+    "Accept-Language": "en-IN,en;q=0.9",
 }
 
 # Add the RSS feeds you want to track here.
@@ -38,13 +40,14 @@ FEEDS = [
     ("Economic Times - Markets", "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"),
     ("Moneycontrol - Business", "https://www.moneycontrol.com/rss/business.xml"),
     ("The Hindu - Business", "https://www.thehindu.com/business/feeder/default.rss"),
-    ("Business Standard", "https://www.business-standard.com/rss/home_page_top.rss"),
-    ("Financial Express", "https://www.financialexpress.com/feed/"),
+    ("Business Standard - Latest", "https://www.business-standard.com/rss/latest.rss"),
+    ("Business Standard - Companies", "https://www.business-standard.com/rss/companies-101.rss"),
+    ("Indian Express - Business", "https://indianexpress.com/section/business/feed/"),
     ("Times of India - Business", "https://timesofindia.indiatimes.com/rssfeeds/1898055.cms"),
     ("NDTV Profit", "https://feeds.feedburner.com/ndtvprofit-latest"),
     ("YourStory", "https://yourstory.com/feed/"),
     ("Inc42", "https://inc42.com/feed/"),
-    ("Entrackr", "https://entrackr.com/feed"),
+    ("Entrackr", "https://entrackr.com/rss"),
 ]
 
 

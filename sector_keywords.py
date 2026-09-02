@@ -62,6 +62,19 @@ RIDE_HAILING_DIRECT = [
     "surge pricing",
     "cab strike",
     "auto strike",
+    "ola driver",
+    "uber driver",
+    "rapido captain",
+    "namma-yatri",
+    "jugnoo",
+    "quickride",
+    "quick ride",
+    "everest fleet",
+    "ani technologies",
+    "app-based cab",
+    "app based cab",
+    "cab booking app",
+    "driver protest",
 ]
 
 # Demand drivers: events that typically lift ride volume in operational cities
@@ -166,6 +179,8 @@ RIDE_HAILING_EXCLUDE = [
     "ola cell",
     "electric scooter",
     "ev scooter",
+    "uber eats",
+    "uber-eats",
 ]
 
 # Direct sector keywords (company names, sector terms)
@@ -223,7 +238,8 @@ NEWSAPI_QUERIES = {
     "e_commerce": "e-commerce India OR Flipkart OR Amazon India OR Myntra OR Meesho",
     "quick_commerce": "quick commerce India OR Blinkit OR Zepto OR Swiggy Instamart OR BigBasket",
     "ride_hailing": (
-        '(Ola OR Rapido OR "Namma Yatri" OR BluSmart OR inDrive OR "Uber India") '
+        '("Ola Cabs" OR "Ola taxi" OR Rapido OR "Namma Yatri" OR BluSmart OR inDrive '
+        'OR "Uber India" OR "bike taxi" OR "cab aggregator") '
         "AND (India OR cab OR taxi OR ride OR driver OR fare) OR "
         '("metro strike" OR "metro shutdown" OR "transport strike" OR "board exam" '
         'OR election OR concert OR IPL) AND (Delhi OR Mumbai OR Bengaluru OR Gurugram OR Noida OR India)'
@@ -241,7 +257,10 @@ NEWSAPI_QUERIES = {
 GNEWS_QUERIES = {
     "e_commerce": "Flipkart OR Amazon India OR Myntra OR Meesho",
     "quick_commerce": "Blinkit OR Zepto OR Instamart OR quick commerce",
-    "ride_hailing": "Ola OR Rapido OR Uber India OR Namma Yatri OR BluSmart",
+    "ride_hailing": (
+        '"Ola Cabs" OR Rapido OR "Uber India" OR "Namma Yatri" OR BluSmart '
+        'OR inDrive OR "bike taxi" OR "cab aggregator" -"Ola Electric"'
+    ),
     "value_commerce": "Meesho OR Snapdeal OR JioMart OR DMart OR value commerce India",
     "food_delivery": "Zomato OR Swiggy OR food delivery India",
     "fashion": "fashion retail India OR Myntra OR apparel India",
@@ -307,10 +326,17 @@ def _has_ola_ride_context(haystack):
 
 
 def _has_uber_ride_context(haystack):
-    if _contains_phrase(haystack, "uber india"):
-        return True
     if not _contains_phrase(haystack, "uber"):
         return False
+    if _any_phrase(haystack, ("uber eats", "uber-eats")):
+        ride_terms = [
+            "cab", "taxi", "ride-hailing", "ride hailing", "driver partner",
+            "bike taxi", "aggregator",
+        ]
+        if not any(t in haystack for t in ride_terms):
+            return False
+    if _contains_phrase(haystack, "uber india"):
+        return True
     ride_terms = [
         "cab", "taxi", "ride", "driver", "partner", "fare", "hailing",
         "aggregator", " india", "delhi", "mumbai", "bengaluru", "bangalore",
