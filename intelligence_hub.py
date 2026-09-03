@@ -66,30 +66,38 @@ CREATE INDEX IF NOT EXISTS idx_intelligence_sector_dates
 ON intelligence_reports(sector, start_date, end_date);
 """
 
-SYSTEM_PROMPT = """You are a senior strategy consultant at Redseer writing an India-focused \
-sector intelligence brief for executives.
+SYSTEM_PROMPT = """You are a senior strategy consultant at Redseer writing a WEEKLY \
+India-focused sector intelligence brief for executives.
 
-You receive a consolidated list of already-processed news articles for ONE sector and \
-ONE date range. Merge duplicate coverage of the same event. Prefer hard facts, numbers, \
-company names, and business implications over fluff.
+You receive already-processed news articles for ONE sector and ONE week (or week range). \
+Merge duplicate coverage of the same event into a single card.
+
+Each section item is shown as its own card. The reader must understand the full story \
+from the card itself and should not need to open the source article.
+
+Every array item MUST include a "summary" field: 4 to 7 complete sentences covering \
+who was involved, what happened this week, key numbers in context, why it matters for \
+the India sector, and the likely business implication. Do not write one-line fragments \
+or number-only blurbs such as "Rs 3,265 Cr offload". Put the number inside the narrative.
 
 Return ONLY valid JSON with exactly these keys:
 {
-  "executive_summary": "3-6 sentence consultant brief",
-  "key_metrics":[{"company":"","metric":"","value":"","comparison":"","period":"","source_ids":[]}],
-  "strategic_moves":[{"company":"","move":"","importance":"High|Medium|Low","source_ids":[]}],
-  "funding":[{"company":"","amount":"","investor":"","source_ids":[]}],
-  "partnerships":[{"company_a":"","company_b":"","purpose":"","source_ids":[]}],
-  "leadership_changes":[{"company":"","executive":"","role":"","change":"","source_ids":[]}],
-  "product_launches":[{"company":"","product":"","description":"","source_ids":[]}],
-  "regulations":[{"authority":"","policy":"","impact":"","source_ids":[]}],
-  "consumer_trends":[{"trend":"","evidence":"","impact":"","source_ids":[]}],
-  "technology_ai":[{"company":"","technology":"","business_impact":"","source_ids":[]}],
-  "competitive_landscape":[{"company":"","development":"","implication":"","source_ids":[]}],
-  "what_to_watch":["...", "...", "..."]
+  "executive_summary": "6-10 sentence weekly brief covering the main stories, numbers, and so-what",
+  "key_metrics":[{"company":"","metric":"","value":"","comparison":"","period":"","summary":"","source_ids":[]}],
+  "strategic_moves":[{"company":"","move":"","importance":"High|Medium|Low","summary":"","source_ids":[]}],
+  "funding":[{"company":"","amount":"","investor":"","summary":"","source_ids":[]}],
+  "partnerships":[{"company_a":"","company_b":"","purpose":"","summary":"","source_ids":[]}],
+  "leadership_changes":[{"company":"","executive":"","role":"","change":"","summary":"","source_ids":[]}],
+  "product_launches":[{"company":"","product":"","description":"","summary":"","source_ids":[]}],
+  "regulations":[{"authority":"","policy":"","impact":"","summary":"","source_ids":[]}],
+  "consumer_trends":[{"trend":"","evidence":"","impact":"","summary":"","source_ids":[]}],
+  "technology_ai":[{"company":"","technology":"","business_impact":"","summary":"","source_ids":[]}],
+  "competitive_landscape":[{"company":"","development":"","implication":"","summary":"","source_ids":[]}],
+  "what_to_watch":[{"watch":"short headline","summary":"","source_ids":[]}]
 }
 
 Rules:
+- summary is mandatory and must be a self-contained news brief, not a headline restatement.
 - Use empty arrays when a section has no evidence.
 - source_ids must reference article id integers from the input.
 - Do not invent companies, funding amounts, or metrics not supported by the articles.
@@ -97,11 +105,12 @@ Rules:
 - No markdown fences, no preamble.
 """
 
-MERGE_PROMPT = """You are merging partial Redseer intelligence reports for the same sector \
-and date range into ONE final consultant brief.
+MERGE_PROMPT = """You are merging partial Redseer WEEKLY intelligence reports for the same \
+sector and week into ONE final consultant brief.
 
-Return ONLY valid JSON with the same schema as a full report. Deduplicate repeated items. \
-Prefer higher-importance strategic moves and keep source_ids when present.
+Return ONLY valid JSON with the same schema as a full report. Keep each item's summary as \
+a 4-7 sentence self-contained news brief. Deduplicate repeated items. Prefer \
+higher-importance strategic moves and keep source_ids when present.
 """
 
 
@@ -249,6 +258,43 @@ def _empty_report():
     }
 
 
+def _normalize_item(item):
+    if not isinstance(item, dict):
+        return None
+    cleaned = dict(item)
+    cleaned["summary"] = str(cleaned.get("summary") or "").strip()
+    raw_ids = cleaned.get("source_ids") or []
+    ids = []
+    for value in raw_ids:
+        try:
+            ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    cleaned["source_ids"] = ids
+    return cleaned
+
+
+def _normalize_watch_item(item):
+    if isinstance(item, str) and item.strip():
+        text = item.strip()
+        return {"watch": text, "summary": text, "source_ids": []}
+    cleaned = _normalize_item(item)
+    if not cleaned:
+        return None
+    watch = str(
+        cleaned.get("watch")
+        or cleaned.get("item")
+        or cleaned.get("headline")
+        or ""
+    ).strip()
+    summary = cleaned.get("summary") or watch
+    if not watch and not summary:
+        return None
+    cleaned["watch"] = watch or summary.split(".")[0][:80]
+    cleaned["summary"] = summary
+    return cleaned
+
+
 def _normalize_report(payload):
     report = _empty_report()
     if not isinstance(payload, dict):
@@ -259,12 +305,18 @@ def _normalize_report(payload):
             continue
         value = payload.get(key)
         if key == "what_to_watch":
-            report[key] = [str(item).strip() for item in (value or []) if str(item).strip()]
+            cleaned = []
+            for item in (value or []):
+                watch = _normalize_watch_item(item)
+                if watch:
+                    cleaned.append(watch)
+            report[key] = cleaned
         elif isinstance(value, list):
             cleaned = []
             for item in value:
-                if isinstance(item, dict):
-                    cleaned.append(item)
+                normalized = _normalize_item(item)
+                if normalized:
+                    cleaned.append(normalized)
             report[key] = cleaned
         else:
             report[key] = []
@@ -399,6 +451,23 @@ def validate_dates(start_date, end_date=None):
     return start_date, end_date
 
 
+def period_label(start_date, end_date=None):
+    start_date, end_date = validate_dates(start_date, end_date)
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+
+    def fmt(day):
+        return f"{day.day} {day.strftime('%b %Y')}"
+
+    span = (end - start).days
+    if span == 6 and start.weekday() == 0:
+        iso = start.isocalendar()
+        return f"Week {iso[1]}, {iso[0]} · {fmt(start)} – {fmt(end)}"
+    if start_date == end_date:
+        return fmt(start)
+    return f"{fmt(start)} – {fmt(end)}"
+
+
 def fetch_sector_articles(sector, start_date, end_date):
     """Read-only query of already processed, relevant articles."""
     sector = validate_sector(sector)
@@ -475,6 +544,7 @@ def _article_payload(article):
         "title": article.get("title") or "",
         "date": article.get("pub_date") or "",
         "source": article.get("source") or "",
+        "subtitle": article.get("subtitle") or "",
         "summary": article.get("summary") or article.get("subtitle") or "",
         "url": article.get("resolved_url") or article.get("url") or "",
         "related_ids": article.get("related_ids") or [],
@@ -513,10 +583,16 @@ def generate_report_json(sector, start_date, end_date, articles):
         user_payload = {
             "sector": sector,
             "sector_label": label,
+            "cadence": "weekly",
             "start_date": start_date,
             "end_date": end_date,
+            "period_label": period_label(start_date, end_date),
             "article_count": len(chunk),
             "articles": chunk,
+            "instruction": (
+                "Write each section item as a self-contained news card. "
+                "The summary field must explain the full story so a reader does not need the source."
+            ),
         }
         report, model = _call_intelligence_model(client, SYSTEM_PROMPT, user_payload)
         partials.append(report)
@@ -532,12 +608,16 @@ def report_to_markdown(sector, start_date, end_date, report, articles=None):
     label = SECTOR_LABELS.get(sector, sector)
     lines = [
         f"# Redseer Intelligence Hub — {label}",
-        f"**Period:** {start_date} → {end_date}",
+        f"**Period:** {period_label(start_date, end_date)}",
         "",
         "## Executive Summary",
         report.get("executive_summary") or "_No summary available._",
         "",
     ]
+
+    def headline(row, fields):
+        parts = [str(row.get(field) or "").strip() for field in fields]
+        return " — ".join(part for part in parts if part) or "Update"
 
     def section(title, rows, fields):
         lines.append(f"## {title}")
@@ -546,36 +626,38 @@ def report_to_markdown(sector, start_date, end_date, report, articles=None):
             lines.append("")
             return
         for row in rows:
-            bits = [f"**{row.get(fields[0], '')}**"]
-            for field in fields[1:]:
-                val = row.get(field)
-                if val:
-                    bits.append(f"{field.replace('_', ' ')}: {val}")
+            if isinstance(row, str):
+                lines.append(f"- {row}")
+                continue
+            lines.append(f"### {headline(row, fields)}")
+            summary = (row.get("summary") or "").strip()
+            if summary:
+                lines.append(summary)
+            else:
+                extras = []
+                for field in fields[1:]:
+                    val = row.get(field)
+                    if val:
+                        extras.append(f"{field.replace('_', ' ')}: {val}")
+                if extras:
+                    lines.append(" | ".join(extras))
             source_ids = row.get("source_ids") or []
             if source_ids:
-                bits.append(f"sources: {', '.join(str(i) for i in source_ids)}")
-            lines.append("- " + " | ".join(bits))
+                lines.append(f"Source ids: {', '.join(str(i) for i in source_ids)}")
+            lines.append("")
         lines.append("")
 
-    section("Key Metrics", report.get("key_metrics"), ["company", "metric", "value", "comparison", "period"])
+    section("Key Metrics", report.get("key_metrics"), ["company", "metric", "value"])
     section("Strategic Moves", report.get("strategic_moves"), ["company", "move", "importance"])
     section("Funding", report.get("funding"), ["company", "amount", "investor"])
     section("Partnerships", report.get("partnerships"), ["company_a", "company_b", "purpose"])
     section("Leadership Changes", report.get("leadership_changes"), ["company", "executive", "role", "change"])
-    section("Product Launches", report.get("product_launches"), ["company", "product", "description"])
-    section("Regulations", report.get("regulations"), ["authority", "policy", "impact"])
-    section("Consumer Trends", report.get("consumer_trends"), ["trend", "evidence", "impact"])
-    section("Technology & AI", report.get("technology_ai"), ["company", "technology", "business_impact"])
-    section("Competitive Landscape", report.get("competitive_landscape"), ["company", "development", "implication"])
-
-    lines.append("## What to Watch")
-    watch = report.get("what_to_watch") or []
-    if not watch:
-        lines.append("_None identified._")
-    else:
-        for item in watch:
-            lines.append(f"- {item}")
-    lines.append("")
+    section("Product Launches", report.get("product_launches"), ["company", "product"])
+    section("Regulations", report.get("regulations"), ["authority", "policy"])
+    section("Consumer Trends", report.get("consumer_trends"), ["trend"])
+    section("Technology & AI", report.get("technology_ai"), ["company", "technology"])
+    section("Competitive Landscape", report.get("competitive_landscape"), ["company", "development"])
+    section("What to Watch", report.get("what_to_watch"), ["watch"])
 
     if articles:
         lines.append("## Source Articles")
@@ -596,8 +678,9 @@ def _row_to_report(row, include_json=True):
         return None
     data = dict(row)
     data["source_article_ids"] = json.loads(data.get("source_article_ids") or "[]")
+    data["period_label"] = period_label(data["start_date"], data["end_date"])
     if include_json:
-        data["report"] = json.loads(data.get("report_json") or "{}")
+        data["report"] = _normalize_report(json.loads(data.get("report_json") or "{}"))
     else:
         data.pop("report_json", None)
     return data
@@ -653,7 +736,12 @@ def list_reports(sector=None, limit=50):
     params.append(int(limit))
     with database.get_conn() as conn:
         rows = conn.execute(query, params).fetchall()
-    return [dict(row) for row in rows]
+    reports = []
+    for row in rows:
+        item = dict(row)
+        item["period_label"] = period_label(item["start_date"], item["end_date"])
+        reports.append(item)
+    return reports
 
 
 def delete_report(report_id):
@@ -773,4 +861,7 @@ def enrich_report_with_sources(report_row):
         sources = [dict(row) for row in rows]
     report_row["sources"] = sources
     report_row["sector_label"] = SECTOR_LABELS.get(report_row["sector"], report_row["sector"])
+    report_row["period_label"] = report_row.get("period_label") or period_label(
+        report_row["start_date"], report_row["end_date"]
+    )
     return report_row

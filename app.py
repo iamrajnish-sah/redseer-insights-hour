@@ -449,6 +449,7 @@ def public_intelligence_briefs(limit: int = 12):
             "sector_label": SECTOR_LABELS.get(row["sector"], row["sector"]),
             "start_date": row["start_date"],
             "end_date": row["end_date"],
+            "period_label": row.get("period_label") or intelligence_hub.period_label(row["start_date"], row["end_date"]),
             "generated_at": row["generated_at"],
             "article_count": row["article_count"],
             "executive_summary": payload.get("executive_summary") or "",

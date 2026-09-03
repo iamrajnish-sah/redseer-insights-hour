@@ -1297,14 +1297,14 @@ async function loadIntelligenceBriefs() {
       wrap.innerHTML = `<a class="intel-card" href="/intelligence">
         <div class="intel-meta">Intelligence Hub</div>
         <h3>Sector briefs are public</h3>
-        <p>Open Intelligence Hub to read consultant-style summaries. Generating a new brief still uses the admin password and the NVIDIA API key.</p>
+        <p>Open Intelligence Hub to read weekly sector cards. Generating a new brief still uses the admin password and the NVIDIA API key.</p>
       </a>`;
       return;
     }
     wrap.innerHTML = briefs.slice(0, 4).map((b) => {
-      const summary = (b.executive_summary || "Open for the full sector brief.").slice(0, 220);
+      const summary = (b.executive_summary || "Open for the full sector brief.").slice(0, 280);
       return `<a class="intel-card" href="/intelligence">
-        <div class="intel-meta">${escapeHtml(b.sector_label || b.sector)} · ${escapeHtml(b.start_date || "")}</div>
+        <div class="intel-meta">${escapeHtml(b.sector_label || b.sector)} · ${escapeHtml(b.period_label || b.start_date || "")}</div>
         <h3>${escapeHtml(b.sector_label || "Sector brief")}</h3>
         <p>${escapeHtml(summary)}</p>
       </a>`;
