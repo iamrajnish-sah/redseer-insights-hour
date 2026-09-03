@@ -119,8 +119,9 @@
     <div class="filters">
       <button class="btn btn-ghost" id="btnPreview" onclick="previewArticles()">Preview articles</button>
       <button class="btn btn-primary" id="btnGenerate" onclick="generateReport(false)">Generate Intelligence</button>
+      <button class="btn btn-teal" id="btnEmailWeek" onclick="emailWeek()">Email this week</button>
     </div>
-    <div class="hint">Uses the week range above and INTELLIGENCE_GEMINI_API_KEY on the server (separate from the news Gemini key). Visitors cannot see or run this. Regenerating replaces the short cached cards with full news summaries.</div>
+    <div class="hint">Uses the week range above and INTELLIGENCE_GEMINI_API_KEY on the server (separate from the news Gemini key). Visitors cannot see or run this. Email this week sends published briefs to active subscribers. Monday 08:00 UTC also sends last week’s briefs automatically.</div>
   </div>
 
   <div class="panel" id="reportPanel" style="display:none;">
@@ -699,6 +700,33 @@ async function deleteReport(id) {
   }
 }
 
+async function emailWeek() {
+  if (!(await ensureAdmin())) {
+    showToast("Only an admin can email weekly briefs.", true);
+    return;
+  }
+  const dates = selectedDates();
+  if (!dates.start_date) { showToast("Pick a week first.", true); return; }
+  setLoading("btnEmailWeek", true);
+  try {
+    const resp = await adminFetch(API + "/api/admin/intelligence/email-week", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start_date: dates.start_date,
+        end_date: dates.end_date,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Weekly email failed");
+    showToast(data.sent_count ? `Sent ${data.sent_count} weekly brief email(s).` : (data.message || "No emails sent."));
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    setLoading("btnEmailWeek", false);
+  }
+}
+
 async function init() {
   fillWeekSelects();
   const statusResp = await fetch(API + "/api/intelligence/status");
@@ -715,6 +743,10 @@ async function init() {
     if (verify.ok) setAdminUi(true);
   }
   await loadHistory();
+  const reportId = Number(new URLSearchParams(window.location.search).get("report") || "");
+  if (reportId) {
+    await viewReport(reportId);
+  }
 }
 
 init().catch(err => showToast(err.message || String(err), true));

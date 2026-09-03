@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/refresh-rss",
       "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-intelligence",
+      "schedule": "0 8 * * 1"
     }
   ]
 }

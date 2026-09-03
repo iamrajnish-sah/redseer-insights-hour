@@ -12,6 +12,7 @@ import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape as html_escape
 from pathlib import Path
 
 import database
@@ -364,3 +365,107 @@ def email_recipient_summary():
         SECTOR_LABELS.get(k, k): len(v) for k, v in legacy.items() if v
     }
     return summary
+
+
+def _brief_card_html(report):
+    payload = report.get("report") or {}
+    label = report.get("sector_label") or SECTOR_LABELS.get(report.get("sector"), report.get("sector"))
+    period = report.get("period_label") or f"{report.get('start_date')} – {report.get('end_date')}"
+    summary = html_escape((payload.get("executive_summary") or "").strip() or "Open the hub for this week's brief.")
+    href = f"{_base_url()}/intelligence?report={report['id']}"
+    return f"""
+        <tr>
+          <td style="padding:16px 0;border-bottom:1px solid #e2e8f0;">
+            <div style="font-size:12px;font-weight:700;color:#0d9488;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">
+              {html_escape(label)} · {html_escape(period)}
+            </div>
+            <div style="font-size:15px;font-weight:700;color:#1e3a5f;margin-bottom:8px;">{html_escape(label)}</div>
+            <div style="font-size:14px;color:#475569;line-height:1.55;margin-bottom:10px;">{summary}</div>
+            <a href="{href}" style="color:#0d9488;font-weight:700;text-decoration:none;">Read the full brief →</a>
+          </td>
+        </tr>"""
+
+
+def send_weekly_intelligence_emails(start_date=None, end_date=None):
+    """Email each active subscriber the weekly Intelligence Hub briefs for their sectors."""
+    if not smtp_configured():
+        raise RuntimeError(
+            "SMTP is not configured. Add SMTP_HOST, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM to .env"
+        )
+
+    import intelligence_hub
+
+    if not start_date or not end_date:
+        start_date, end_date = intelligence_hub.week_for_email()
+    start_date, end_date = intelligence_hub.validate_dates(start_date, end_date)
+    period = intelligence_hub.period_label(start_date, end_date)
+
+    reports_by_sector = {}
+    for sector in SECTOR_LABELS:
+        report = intelligence_hub.get_cached_report(sector, start_date, end_date)
+        if not report:
+            overlapping = intelligence_hub.reports_for_period(sector, start_date, end_date)
+            report = overlapping[0] if overlapping else None
+        if report:
+            reports_by_sector[sector] = intelligence_hub.enrich_report_with_sources(report)
+
+    if not reports_by_sector:
+        raise LookupError(
+            f"No Intelligence Hub briefs for {period}. Generate the week first, then send."
+        )
+
+    active = subscribers.list_subscribers(status=subscribers.STATUS_SUBSCRIBED)
+    if not active:
+        raise RuntimeError("No active subscribers to email.")
+
+    results = []
+    sent_emails = set()
+    for sub in active:
+        email = sub["email"]
+        if email in sent_emails:
+            continue
+        matched = [reports_by_sector[s] for s in (sub.get("sectors") or []) if s in reports_by_sector]
+        if not matched:
+            results.append({
+                "email": email,
+                "name": sub.get("name"),
+                "status": "skipped",
+                "reason": "no briefs for subscribed sectors",
+            })
+            continue
+
+        cards = "".join(_brief_card_html(report) for report in matched)
+        footer = build_email_footer(sub["token"])
+        html = _wrap_email_html(
+            header_title=f"{PRODUCT_NAME} — Weekly Intelligence",
+            header_subtitle=period,
+            body_rows=cards,
+            footer_html=footer,
+        )
+        labels = [report.get("sector_label") or report.get("sector") for report in matched]
+        subject = f"{PRODUCT_NAME} — Weekly brief — {period}"
+        if len(labels) == 1:
+            subject = f"{PRODUCT_NAME} — {labels[0]} — {period}"
+        _send_email([email], subject, html)
+        sent_emails.add(email)
+        results.append({
+            "email": email,
+            "name": sub.get("name"),
+            "status": "sent",
+            "sectors": [report.get("sector") for report in matched],
+        })
+
+    sent = [item for item in results if item["status"] == "sent"]
+    if not sent:
+        raise RuntimeError("No weekly emails sent — subscribers have no matching briefs this week.")
+
+    return {
+        "mode": "weekly_intelligence",
+        "start_date": start_date,
+        "end_date": end_date,
+        "period_label": period,
+        "briefs": len(reports_by_sector),
+        "sent_count": len(sent),
+        "skipped_count": len(results) - len(sent),
+        "results": results,
+    }

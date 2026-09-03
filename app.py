@@ -602,6 +602,28 @@ async def admin_generate_intelligence(
     }
 
 
+@app.post("/api/admin/intelligence/email-week")
+async def admin_email_weekly_intelligence(
+    request: Request,
+    _: None = Depends(admin_auth.require_admin),
+):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    start_date = (body or {}).get("start_date")
+    end_date = (body or {}).get("end_date")
+    try:
+        result = email_digest.send_weekly_intelligence_emails(start_date, end_date)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, f"Weekly email failed: {exc}") from exc
+    return {"ok": True, **result}
+
+
 @app.delete("/api/admin/intelligence/reports/{report_id}")
 def admin_delete_intelligence_report(report_id: int, _: None = Depends(admin_auth.require_admin)):
     try:
@@ -734,6 +756,28 @@ def cron_refresh_rss(
         return auto_refresh.try_auto_refresh(force=True, rss_only=True)
     except Exception as exc:
         raise HTTPException(500, f"RSS cron failed: {exc}") from exc
+
+
+@app.get("/api/cron/weekly-intelligence")
+def cron_weekly_intelligence(
+    authorization: str = Header(default=None, alias="Authorization"),
+    user_agent: str = Header(default=None, alias="User-Agent"),
+    x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
+    x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
+):
+    """Monday cron: email subscribers the previous week's Intelligence Hub briefs."""
+    if not _cron_allowed(
+        authorization, user_agent, x_vercel_cron_schedule, x_admin_password
+    ):
+        raise HTTPException(401, "Unauthorized")
+    restore_db(database.DB_PATH)
+    try:
+        result = email_digest.send_weekly_intelligence_emails()
+    except LookupError as exc:
+        return {"ok": True, "sent_count": 0, "message": str(exc)}
+    except Exception as exc:
+        raise HTTPException(500, f"Weekly intelligence email failed: {exc}") from exc
+    return {"ok": True, **result}
 
 
 @app.get("/api/admin/storage-status")

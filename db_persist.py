@@ -302,6 +302,24 @@ def _merge_remote_into_local(local_path, remote_bytes):
                        JOIN main.subscribers m ON m.email = r.email COLLATE NOCASE"""
                 )
 
+            if _table_columns(conn, "remote", "intelligence_reports") and _table_columns(conn, "main", "intelligence_reports"):
+                local_intel = _table_columns(conn, "main", "intelligence_reports")
+                remote_intel = _table_columns(conn, "remote", "intelligence_reports")
+                intel_cols = [c for c in remote_intel if c in local_intel and c != "id"]
+                if intel_cols:
+                    col_list = ", ".join(intel_cols)
+                    sel_list = ", ".join(f"r.{c}" for c in intel_cols)
+                    conn.execute(
+                        f"""INSERT OR IGNORE INTO main.intelligence_reports ({col_list})
+                            SELECT {sel_list} FROM remote.intelligence_reports r
+                            WHERE NOT EXISTS (
+                              SELECT 1 FROM main.intelligence_reports m
+                              WHERE m.sector = r.sector
+                                AND m.start_date = r.start_date
+                                AND m.end_date = r.end_date
+                            )"""
+                    )
+
             conn.commit()
             conn.execute("DETACH DATABASE remote")
         finally:
@@ -348,16 +366,9 @@ def restore_db(local_path, force=False):
         )
         return True
 
-    # Case 2: local DB has articles — NEVER overwrite the file.
-    # Merge any articles the cloud backup has that local is missing.
-    remote_size = _blob_remote_size(blob_url)
-    if not force and remote_size <= local_size * 1.02 + _SIZE_MARGIN_BYTES:
-        print(
-            f"  [restore] keeping local database ({local_size:,} B, {local_count} articles); "
-            f"cloud backup is not larger ({remote_size:,} B)"
-        )
-        return False
-
+    # Case 2: local DB has articles — NEVER overwrite the file wholesale.
+    # Always merge cloud rows (articles, subscribers, intelligence briefs).
+    # Skipping this when sizes looked similar wiped older subscribers on save.
     data = _download_blob(blob_url)
     if not data:
         return False
@@ -389,43 +400,43 @@ def save_db(local_path, force=False):
     _checkpoint_sqlite(local_path)
     local_size = os.path.getsize(local_path)
     blob_url = _list_blob_url()
-    if blob_url and not force:
-        remote_size = _blob_remote_size(blob_url)
-        # Integrity guard: never replace a larger cloud backup with a smaller
-        # local dataset (happens after a failed cold-start restore on Vercel).
-        if remote_size > local_size * 1.02 + _SIZE_MARGIN_BYTES:
-            local_count = _article_count(local_path)
-            print(
-                f"  [integrity] cloud backup ({remote_size:,} B) larger than local "
-                f"({local_size:,} B, {local_count} articles) — merging cloud data before save"
-            )
-            data = _download_blob(blob_url)
-            remote_count = -1
-            if data:
-                remote_tmp = _write_temp_db(data)
-                try:
-                    remote_count = _article_count(remote_tmp)
-                finally:
+    if blob_url:
+        # Always fold cloud subscribers/briefs/articles into local before upload
+        # so a cold instance cannot overwrite older emails with a smaller list.
+        data = _download_blob(blob_url)
+        if data:
+            try:
+                added = _merge_remote_into_local(local_path, data)
+                if added:
+                    print(f"  [persist] merged {added} article(s) from cloud backup before save")
+            except Exception as exc:
+                print(f"  [warning] pre-save cloud merge failed: {exc}")
+        _checkpoint_sqlite(local_path)
+        local_size = os.path.getsize(local_path)
+        if not force:
+            remote_size = _blob_remote_size(blob_url)
+            if remote_size > local_size * 1.02 + _SIZE_MARGIN_BYTES:
+                local_count = _article_count(local_path)
+                remote_count = -1
+                if data:
+                    remote_tmp = _write_temp_db(data)
                     try:
-                        os.remove(remote_tmp)
-                    except OSError:
-                        pass
-                try:
-                    added = _merge_remote_into_local(local_path, data)
-                    print(f"  [integrity] merged {added} article(s) from cloud backup into local DB")
-                except Exception as exc:
-                    print(f"  [warning] cloud merge failed: {exc}")
-            local_count = _article_count(local_path)
-            if remote_count > local_count:
-                _LAST_SAVE_ERROR = (
-                    f"Refused to overwrite cloud backup ({remote_count} articles, {remote_size:,} B) "
-                    f"with smaller local dataset ({local_count} articles, {local_size:,} B). "
-                    f"Use Restore from Cloud, or force-save to override."
-                )
-                print(f"  [integrity] {_LAST_SAVE_ERROR}")
-                return False
-            _checkpoint_sqlite(local_path)
-            local_size = os.path.getsize(local_path)
+                        remote_count = _article_count(remote_tmp)
+                    finally:
+                        try:
+                            os.remove(remote_tmp)
+                        except OSError:
+                            pass
+                if remote_count > local_count:
+                    _LAST_SAVE_ERROR = (
+                        f"Refused to overwrite cloud backup ({remote_count} articles, {remote_size:,} B) "
+                        f"with smaller local dataset ({local_count} articles, {local_size:,} B). "
+                        f"Use Restore from Cloud, or force-save to override."
+                    )
+                    print(f"  [integrity] {_LAST_SAVE_ERROR}")
+                    return False
+                _checkpoint_sqlite(local_path)
+                local_size = os.path.getsize(local_path)
 
     sdk_result = _save_with_vercel_sdk(local_path)
     if sdk_result and sdk_result is not False:

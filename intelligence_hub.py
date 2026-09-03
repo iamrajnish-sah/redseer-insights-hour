@@ -25,7 +25,7 @@ import os
 import re
 import ssl
 import time
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 import certifi
 from google import genai
@@ -399,6 +399,26 @@ def period_label(start_date, end_date=None):
     if start_date == end_date:
         return fmt(start)
     return f"{fmt(start)} – {fmt(end)}"
+
+
+def iso_week_bounds(which="current", today=None):
+    """Monday–Sunday dates for the current or last completed ISO week."""
+    today = today or date.today()
+    this_monday = today - timedelta(days=today.weekday())
+    if which == "last":
+        start = this_monday - timedelta(days=7)
+        end = this_monday - timedelta(days=1)
+    else:
+        start = this_monday
+        end = this_monday + timedelta(days=6)
+    return start.isoformat(), end.isoformat()
+
+
+def week_for_email(today=None):
+    """Monday cron sends last completed week; other days prefer the current week."""
+    today = today or date.today()
+    which = "last" if today.weekday() == 0 else "current"
+    return iso_week_bounds(which, today=today)
 
 
 def fetch_sector_articles(sector, start_date, end_date):

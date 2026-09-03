@@ -247,7 +247,16 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 12px;
-    margin: 0 0 18px;
+    margin: 0;
+  }
+  .panel-intel { margin: 0 0 18px; }
+  .intel-hub-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
   }
   .intel-card {
     background: var(--surface);
@@ -833,7 +842,6 @@
       <p class="brand-tagline">Daily sector intelligence for India — curated news delivered to the right team.</p>
     </div>
     <div class="topbar-actions">
-      <a class="btn btn-ghost" href="/intelligence">🧠 Intelligence Hub</a>
       <button type="button" class="btn btn-teal" onclick="openSubscribeModal()">✉ Subscribe</button>
       <div class="date-pill" id="todayDate"></div>
     </div>
@@ -897,11 +905,17 @@
     <button class="btn btn-ghost btn-sm is-active" id="btnRecent" onclick="filterRecent(7)">Last 7 days</button>
     <button class="btn btn-ghost btn-sm" id="btnAllDates" onclick="clearDateFilter()">All dates</button>
     <input type="date" class="search-input" id="dateFilter" onchange="onDatePicked()">
-    <div class="feed-updated" id="feedUpdated"></div>
   </div>
 
   <nav class="sector-nav" id="tabs"></nav>
-  <div class="intel-strip" id="intelStrip"></div>
+
+  <section class="panel panel-intel" id="intelHub">
+    <div class="intel-hub-head">
+      <p class="panel-title" style="margin:0;">Intelligence Hub</p>
+      <a class="btn btn-ghost btn-sm" href="/intelligence">Browse all weeks</a>
+    </div>
+    <div class="intel-strip" id="intelStrip"></div>
+  </section>
 
   <main>
     <div class="grid" id="grid"></div>
@@ -1112,7 +1126,6 @@ async function init() {
 async function loadFeedSummary() {
   try {
     feedSummary = await (await fetch(API + "/api/feed-summary")).json();
-    updateFeedMeta();
   } catch (_) {}
 }
 
@@ -1249,32 +1262,6 @@ function filterLabel() {
   return "all dates";
 }
 
-function formatRefreshTime(iso) {
-  if (!iso) return "not yet";
-  const normalized = /Z|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + "Z";
-  const dt = new Date(normalized);
-  if (Number.isNaN(dt.getTime())) return iso;
-  return dt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
-
-function updateFeedMeta() {
-  const el = document.getElementById("feedUpdated");
-  if (!el) return;
-  const n = feedSummary.relevant || 0;
-  const when = formatRefreshTime(feedSummary.last_refresh);
-  const sources = feedSummary.sources || {};
-  const parts = [];
-  if (sources.rss) parts.push(`RSS every ${sources.rss.refresh_hours || 2}h (free)`);
-  if (sources.gnews && sources.gnews.configured) parts.push(`GNews every ${sources.gnews.refresh_hours || 4}h`);
-  if (sources.newsapi && sources.newsapi.configured) parts.push(`NewsAPI every ${sources.newsapi.refresh_hours || 6}h`);
-  const cadence = parts.length
-    ? parts.join(" · ")
-    : `RSS every ${feedSummary.refresh_hours || 2} hours; paid APIs less often`;
-  el.textContent = n
-    ? `${n.toLocaleString()} relevant articles stored · ${cadence} · crons 08:00 & 14:00 UTC · last refresh ${when}`
-    : "Waiting for the first feed refresh.";
-}
-
 function cardSummary(a) {
   const title = (a.title || "").trim();
   let text = (a.summary || "").trim() || (a.body || "").trim();
@@ -1292,18 +1279,18 @@ async function loadIntelligenceBriefs() {
   const wrap = document.getElementById("intelStrip");
   if (!wrap) return;
   try {
-    const briefs = await (await fetch(API + "/api/intelligence/briefs?limit=6")).json();
+    const briefs = await (await fetch(API + "/api/intelligence/briefs?limit=12")).json();
     if (!Array.isArray(briefs) || !briefs.length) {
-      wrap.innerHTML = `<a class="intel-card" href="/intelligence">
-        <div class="intel-meta">Intelligence Hub</div>
-        <h3>Sector briefs are public</h3>
-        <p>Open Intelligence Hub to read weekly sector cards. Generating a new brief still uses the admin password and a separate Intelligence Gemini key.</p>
-      </a>`;
+      wrap.innerHTML = `<div class="intel-card">
+        <div class="intel-meta">This week</div>
+        <h3>No briefs published yet</h3>
+        <p>Weekly sector summaries will appear here after an admin generates them.</p>
+      </div>`;
       return;
     }
-    wrap.innerHTML = briefs.slice(0, 4).map((b) => {
+    wrap.innerHTML = briefs.slice(0, 8).map((b) => {
       const summary = (b.executive_summary || "Open for the full sector brief.").slice(0, 280);
-      return `<a class="intel-card" href="/intelligence">
+      return `<a class="intel-card" href="/intelligence?report=${encodeURIComponent(b.id)}">
         <div class="intel-meta">${escapeHtml(b.sector_label || b.sector)} · ${escapeHtml(b.period_label || b.start_date || "")}</div>
         <h3>${escapeHtml(b.sector_label || "Sector brief")}</h3>
         <p>${escapeHtml(summary)}</p>
