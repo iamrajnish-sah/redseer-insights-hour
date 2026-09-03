@@ -23,7 +23,7 @@ Copy `.env.example` to `.env`. Important variables:
 | `ADMIN_PASSWORD` | Protects Backend Management (required on public hosting) |
 | `CRON_SECRET` | Protects `/api/cron/refresh` (recommended on Vercel) |
 | `GEMINIAPIKEY` | Gemini classification + PDF/image newspaper reading |
-| `NVIDIA_API_KEY` | Intelligence Hub summarization and insights (NVIDIA NIM) |
+| `INTELLIGENCE_GEMINI_API_KEY` | Intelligence Hub weekly briefs (second Gemini key; separate quota) |
 | `NEWSAPIKEY` | NewsAPI ingestion (optional) |
 | `SMTP_*` / `EMAIL_FROM` | Send sector email digests |
 | `GEMINI_ORIGINS` | `epub,newspaper` (default) |
@@ -38,7 +38,7 @@ Copy `.env.example` to `.env`. Important variables:
 3. **Environment Variables** — add at minimum:
    - `ADMIN_PASSWORD` — your secret backend password
    - `GEMINIAPIKEY` — news processing / newspaper reading
-   - `NVIDIA_API_KEY` — Intelligence Hub generate (from [build.nvidia.com](https://build.nvidia.com/settings))
+   - `INTELLIGENCE_GEMINI_API_KEY` — Intelligence Hub generate (a **second** Google AI Studio key)
    - `NEWSAPIKEY` (optional)
    - SMTP vars if using email
    - `SECTOR_RECIPIENTS_JSON` — copy content from `sector_recipients.example.json` as one line
@@ -62,6 +62,6 @@ Without Blob, `/tmp` on Vercel is wiped overnight and all news disappears.
 - Sector tabs (e-commerce, ride hailing, quick commerce, etc.)
 - RSS + NewsAPI ingestion with keyword filtering
 - Newspaper upload: EPUB, PDF, images, TXT (Google Gemini)
-- Intelligence Hub: public briefs; generate uses NVIDIA NIM (`NVIDIA_API_KEY`)
+- Intelligence Hub: public weekly briefs; generate uses a separate Gemini key (`INTELLIGENCE_GEMINI_API_KEY`)
 - Sector-specific email digests
 - Duplicate story removal (URL + headline)

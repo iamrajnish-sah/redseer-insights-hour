@@ -6,14 +6,16 @@ processed news articles. Does NOT fetch news, does NOT touch the news Gemini
 pipeline (classify_and_summarize / newspaper_parser).
 
 News processing keeps GEMINIAPIKEY.
-Intelligence Hub uses a separate NVIDIA NIM key:
+Intelligence Hub uses a SEPARATE Gemini key:
 
-  NVIDIA_API_KEY  (aliases: NVIDIAAPIKEY, INTELLIGENCE_NVIDIA_API_KEY)
+  INTELLIGENCE_GEMINI_API_KEY  (or INTELLIGENCE_GEMINIAPIKEY)
 
-Never falls back to the Gemini news key.
+Never falls back to the news Gemini key, so the two jobs do not share quota.
 
-Reads articles from the existing SQLite store and writes only to
-intelligence_reports.
+Reads already-summarized articles (not full text), caps the week to a small
+unique set, and makes one Flash call per weekly brief.
+
+Reads from SQLite and writes only to intelligence_reports.
 """
 
 from __future__ import annotations
@@ -21,11 +23,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import ssl
 import time
 from datetime import datetime
 
 import certifi
-import requests
+from google import genai
+from google.genai import types
 
 import database
 from sector_keywords import SECTOR_LABELS, normalize_sector_tags
@@ -69,20 +73,20 @@ ON intelligence_reports(sector, start_date, end_date);
 SYSTEM_PROMPT = """You are a senior strategy consultant at Redseer writing a WEEKLY \
 India-focused sector intelligence brief for executives.
 
-You receive already-processed news articles for ONE sector and ONE week (or week range). \
-Merge duplicate coverage of the same event into a single card.
+You receive a SMALL set of already-processed article summaries (not full articles) \
+for ONE sector and ONE week. Merge duplicate coverage of the same event into a single card.
 
 Each section item is shown as its own card. The reader must understand the full story \
 from the card itself and should not need to open the source article.
 
-Every array item MUST include a "summary" field: 4 to 7 complete sentences covering \
+Every array item MUST include a "summary" field: 3 to 5 complete sentences covering \
 who was involved, what happened this week, key numbers in context, why it matters for \
 the India sector, and the likely business implication. Do not write one-line fragments \
 or number-only blurbs such as "Rs 3,265 Cr offload". Put the number inside the narrative.
 
 Return ONLY valid JSON with exactly these keys:
 {
-  "executive_summary": "6-10 sentence weekly brief covering the main stories, numbers, and so-what",
+  "executive_summary": "5-8 sentence weekly brief covering the main stories, numbers, and so-what",
   "key_metrics":[{"company":"","metric":"","value":"","comparison":"","period":"","summary":"","source_ids":[]}],
   "strategic_moves":[{"company":"","move":"","importance":"High|Medium|Low","summary":"","source_ids":[]}],
   "funding":[{"company":"","amount":"","investor":"","summary":"","source_ids":[]}],
@@ -109,7 +113,7 @@ MERGE_PROMPT = """You are merging partial Redseer WEEKLY intelligence reports fo
 sector and week into ONE final consultant brief.
 
 Return ONLY valid JSON with the same schema as a full report. Keep each item's summary as \
-a 4-7 sentence self-contained news brief. Deduplicate repeated items. Prefer \
+a 3-5 sentence self-contained news brief. Deduplicate repeated items. Prefer \
 higher-importance strategic moves and keep source_ids when present.
 """
 
@@ -122,21 +126,19 @@ def _now_iso():
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
 
-NVIDIA_DEFAULT_BASE = "https://integrate.api.nvidia.com/v1"
-NVIDIA_DEFAULT_MODELS = (
-    "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-    "nvidia/llama-3.3-nemotron-super-49b-v1",
-    "meta/llama-3.3-70b-instruct",
-    "meta/llama-3.1-70b-instruct",
+INTELLIGENCE_DEFAULT_MODELS = (
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
 )
 
 
 def intelligence_api_key():
-    """NVIDIA key only — never the news Gemini key."""
+    """Intelligence Gemini key only — never the news GEMINIAPIKEY."""
     return (
-        os.environ.get("NVIDIA_API_KEY")
-        or os.environ.get("NVIDIAAPIKEY")
-        or os.environ.get("INTELLIGENCE_NVIDIA_API_KEY")
+        os.environ.get("INTELLIGENCE_GEMINI_API_KEY")
+        or os.environ.get("INTELLIGENCE_GEMINIAPIKEY")
         or ""
     ).strip()
 
@@ -147,42 +149,30 @@ def intelligence_configured():
 
 def _model_chain():
     custom = (
-        os.environ.get("NVIDIA_MODELS")
-        or os.environ.get("NVIDIA_MODEL")
-        or os.environ.get("INTELLIGENCE_NVIDIA_MODELS")
+        os.environ.get("INTELLIGENCE_GEMINI_MODELS")
+        or os.environ.get("INTELLIGENCE_GEMINI_MODEL")
         or ""
     ).strip()
     if custom:
         return [m.strip() for m in custom.split(",") if m.strip()]
-    return list(NVIDIA_DEFAULT_MODELS)
-
-
-def _nvidia_base_url():
-    return (
-        os.environ.get("NVIDIA_API_BASE")
-        or os.environ.get("NVIDIA_BASE_URL")
-        or NVIDIA_DEFAULT_BASE
-    ).rstrip("/")
+    return list(INTELLIGENCE_DEFAULT_MODELS)
 
 
 def _ssl_verify():
-    flag = (
-        os.environ.get("NVIDIA_SSL_VERIFY")
-        or os.environ.get("GEMINI_SSL_VERIFY")
-        or ""
-    ).lower()
+    flag = os.environ.get("GEMINI_SSL_VERIFY", "").lower()
     if flag in ("0", "false", "no"):
         return False
-    return (
+    cafile = (
         os.environ.get("SSL_CERT_FILE")
         or os.environ.get("REQUESTS_CA_BUNDLE")
         or certifi.where()
     )
+    return ssl.create_default_context(cafile=cafile)
 
 
 def _should_try_next_model(exc):
     msg = str(exc).lower()
-    if any(token in msg for token in ("401", "403", "invalid api key", "unauthorized")):
+    if any(token in msg for token in ("401", "403", "invalid api key", "unauthorized", "api key not valid")):
         return False
     return any(
         token in msg
@@ -191,6 +181,7 @@ def _should_try_next_model(exc):
             "404", "not_found", "not found", "is not supported", "is not found",
             "no longer available", "please update your code", "model_not_found",
             "does not exist", "unknown model", "503", "502", "overloaded",
+            "410", "gone", "end of life",
         )
     )
 
@@ -199,18 +190,24 @@ def friendly_intelligence_error(exc):
     text = str(exc)
     compact = re.sub(r"\s+", " ", text).strip()
     lower = compact.lower()
-    if "401" in lower or "unauthorized" in lower or "invalid api key" in lower:
-        return (
-            "NVIDIA rejected the API key. Set NVIDIA_API_KEY in Vercel environment "
-            "variables (build.nvidia.com). "
-            f"({compact[:220]})"
-        )
     if "not set" in lower or "not configured" in lower:
         return compact[:400]
-    if "404" in lower or "not_found" in lower or "unknown model" in lower:
+    if "api key not valid" in lower or "unauthorized" in lower or "401" in lower:
         return (
-            "NVIDIA rejected the model ID. Set NVIDIA_MODELS to a comma-separated "
-            "list from build.nvidia.com, then retry Generate Intelligence. "
+            "Intelligence Gemini key was rejected. Set INTELLIGENCE_GEMINI_API_KEY "
+            "in Vercel (a second Google AI Studio key, not GEMINIAPIKEY). "
+            f"({compact[:220]})"
+        )
+    if "429" in lower or "quota" in lower or "resource_exhausted" in lower:
+        return (
+            "Intelligence Gemini quota was hit. Wait a minute and retry, or use a "
+            "fresh INTELLIGENCE_GEMINI_API_KEY. News processing uses a different key. "
+            f"({compact[:220]})"
+        )
+    if "404" in lower or "not_found" in lower or "not found" in lower:
+        return (
+            "Gemini rejected the intelligence model ID. Retry Generate Intelligence; "
+            "Flash fallbacks are tried automatically. "
             f"({compact[:220]})"
         )
     return compact[:400]
@@ -221,24 +218,30 @@ def friendly_gemini_error(exc):
     return friendly_intelligence_error(exc)
 
 
+def _article_cap():
+    return max(8, int(os.environ.get("INTELLIGENCE_ARTICLE_CAP", "24")))
+
+
 def _batch_size():
-    return int(os.environ.get("INTELLIGENCE_ARTICLE_BATCH", "25"))
+    return max(8, int(os.environ.get("INTELLIGENCE_ARTICLE_BATCH", "24")))
+
+
+def _summary_chars():
+    return max(160, int(os.environ.get("INTELLIGENCE_SUMMARY_CHARS", "360")))
 
 
 def _get_client():
     api_key = intelligence_api_key()
     if not api_key:
         raise RuntimeError(
-            "NVIDIA_API_KEY is not set. Add it in Vercel environment variables "
-            "to generate Intelligence Hub briefs (news pipeline Gemini key is not used)."
+            "INTELLIGENCE_GEMINI_API_KEY is not set. Add a second Google AI Studio "
+            "key in Vercel for Intelligence Hub. GEMINIAPIKEY is only for news/newspaper."
         )
-    return {
-        "api_key": api_key,
-        "base_url": _nvidia_base_url(),
-        "verify": _ssl_verify(),
-        "timeout": int(os.environ.get("NVIDIA_TIMEOUT", "120")),
-        "max_tokens": int(os.environ.get("NVIDIA_MAX_TOKENS", "8192")),
-    }
+    http_options = types.HttpOptions(
+        client_args={"verify": _ssl_verify()},
+        async_client_args={"verify": _ssl_verify()},
+    )
+    return genai.Client(api_key=api_key, http_options=http_options)
 
 
 def _empty_report():
@@ -338,96 +341,26 @@ def _parse_json_response(text):
         raise
 
 
-def _extract_message_text(payload):
-    choices = payload.get("choices") or []
-    if not choices:
-        raise RuntimeError("NVIDIA API returned no choices")
-    message = (choices[0] or {}).get("message") or {}
-    content = message.get("content")
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, dict):
-                parts.append(str(part.get("text") or ""))
-            else:
-                parts.append(str(part))
-        content = "".join(parts)
-    if not (content or "").strip():
-        content = message.get("reasoning_content") or ""
-    if not (content or "").strip():
-        raise RuntimeError("NVIDIA API returned an empty message")
-    return content
-
-
-def _is_nemotron(model):
-    return "nemotron" in (model or "").lower()
-
-
-def _nvidia_chat(client, model, system_prompt, user_payload):
-    system_content = system_prompt
-    if _is_nemotron(model):
-        system_content = "detailed thinking off\n\n" + system_prompt
-    body = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-        ],
-        "temperature": 0.2 if not _is_nemotron(model) else 0,
-        "top_p": 0.9,
-        "max_tokens": client["max_tokens"],
-        "stream": False,
-    }
-    if _is_nemotron(model):
-        body["chat_template_kwargs"] = {"enable_thinking": False}
-
-    url = f"{client['base_url']}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {client['api_key']}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
-    resp = requests.post(
-        url,
-        headers=headers,
-        json=body,
-        timeout=client["timeout"],
-        verify=client["verify"],
-    )
-    if resp.status_code == 400 and "chat_template_kwargs" in body:
-        body.pop("chat_template_kwargs", None)
-        resp = requests.post(
-            url,
-            headers=headers,
-            json=body,
-            timeout=client["timeout"],
-            verify=client["verify"],
-        )
-    if resp.status_code >= 400:
-        detail = (resp.text or "").strip().replace("\n", " ")
-        raise RuntimeError(f"NVIDIA API {resp.status_code} for {model}: {detail[:400]}")
-    try:
-        payload = resp.json()
-    except ValueError as exc:
-        raise RuntimeError(f"NVIDIA API returned non-JSON for {model}") from exc
-    return _extract_message_text(payload)
-
-
 def _call_intelligence_model(client, system_prompt, user_payload):
     last_error = None
+    contents = [system_prompt, json.dumps(user_payload, ensure_ascii=False)]
     for model in _model_chain():
         try:
-            text = _nvidia_chat(client, model, system_prompt, user_payload)
-            return _parse_json_response(text), model
+            resp = client.models.generate_content(
+                model=model,
+                contents=contents,
+                config={"response_mime_type": "application/json"},
+            )
+            return _parse_json_response(resp.text), model
         except Exception as exc:
             last_error = exc
             if not _should_try_next_model(exc):
                 raise
-            print(f"  [intelligence] {model} failed — trying next NVIDIA model ...")
+            print(f"  [intelligence] {model} failed — trying next Gemini model ...")
             time.sleep(0.8)
     raise RuntimeError(
         friendly_intelligence_error(
-            last_error or RuntimeError("All NVIDIA Intelligence models failed")
+            last_error or RuntimeError("All Intelligence Gemini models failed")
         )
     )
 
@@ -538,16 +471,38 @@ def consolidate_articles(articles):
     return consolidated
 
 
+def _truncate(text, limit):
+    text = re.sub(r"\s+", " ", (text or "").strip())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:")
+    return (cut or text[:limit]) + "…"
+
+
 def _article_payload(article):
     return {
         "id": article["id"],
         "title": article.get("title") or "",
         "date": article.get("pub_date") or "",
         "source": article.get("source") or "",
-        "subtitle": article.get("subtitle") or "",
-        "summary": article.get("summary") or article.get("subtitle") or "",
-        "url": article.get("resolved_url") or article.get("url") or "",
-        "related_ids": article.get("related_ids") or [],
+        "summary": _truncate(
+            article.get("summary") or article.get("subtitle") or "",
+            _summary_chars(),
+        ),
+    }
+
+
+def prepare_intelligence_articles(articles):
+    """Dedupe, then keep only the newest unique stories so one Flash call stays small."""
+    consolidated = consolidate_articles(articles)
+    cap = _article_cap()
+    selected = consolidated[:cap]
+    return selected, {
+        "source_count": len(articles),
+        "consolidated_count": len(consolidated),
+        "used_count": len(selected),
+        "capped": len(consolidated) > cap,
+        "article_cap": cap,
     }
 
 
@@ -571,8 +526,8 @@ def _merge_partial_reports(partials):
 
 def generate_report_json(sector, start_date, end_date, articles):
     label = SECTOR_LABELS.get(sector, sector)
-    consolidated = consolidate_articles(articles)
-    payloads = [_article_payload(a) for a in consolidated]
+    selected, _stats = prepare_intelligence_articles(articles)
+    payloads = [_article_payload(a) for a in selected]
     client = _get_client()
     batch = _batch_size()
     partials = []
@@ -590,18 +545,18 @@ def generate_report_json(sector, start_date, end_date, articles):
             "article_count": len(chunk),
             "articles": chunk,
             "instruction": (
-                "Write each section item as a self-contained news card. "
-                "The summary field must explain the full story so a reader does not need the source."
+                "These are already-processed short summaries, not full articles. "
+                "Synthesize a weekly brief. One card per distinct story."
             ),
         }
         report, model = _call_intelligence_model(client, SYSTEM_PROMPT, user_payload)
         partials.append(report)
         models.append(model)
         if index + batch < len(payloads):
-            time.sleep(1.0)
+            time.sleep(0.8)
 
     final = _merge_partial_reports(partials) if len(partials) > 1 else partials[0]
-    return final, consolidated, models[-1] if models else None
+    return final, selected, models[-1] if models else None
 
 
 def report_to_markdown(sector, start_date, end_date, report, articles=None):
@@ -825,8 +780,8 @@ def generate_or_get_report(sector, start_date, end_date=None, force=False, gener
 
     if not intelligence_configured():
         raise RuntimeError(
-            "NVIDIA_API_KEY is not configured. "
-            "Intelligence Hub uses the NVIDIA key; news processing still uses GEMINIAPIKEY."
+            "INTELLIGENCE_GEMINI_API_KEY is not configured. "
+            "Intelligence Hub uses a second Gemini key; news processing still uses GEMINIAPIKEY."
         )
 
     articles = fetch_sector_articles(sector, start_date, end_date)

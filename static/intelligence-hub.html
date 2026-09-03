@@ -120,7 +120,7 @@
       <button class="btn btn-ghost" id="btnPreview" onclick="previewArticles()">Preview articles</button>
       <button class="btn btn-primary" id="btnGenerate" onclick="generateReport(false)">Generate Intelligence</button>
     </div>
-    <div class="hint">Uses the week range above and the NVIDIA API key on the server. Visitors cannot see or run this. Regenerating replaces the short cached cards with full news summaries.</div>
+    <div class="hint">Uses the week range above and INTELLIGENCE_GEMINI_API_KEY on the server (separate from the news Gemini key). Visitors cannot see or run this. Regenerating replaces the short cached cards with full news summaries.</div>
   </div>
 
   <div class="panel" id="reportPanel" style="display:none;">
@@ -602,7 +602,9 @@ async function previewArticles() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || "Preview failed");
     document.getElementById("previewHint").textContent =
-      `${data.consolidated_count} consolidated article(s) from ${data.article_count} processed item(s) for ${SECTORS[sector] || sector}.`;
+      `${data.used_count} unique stor${data.used_count === 1 ? "y" : "ies"} will be sent` +
+      (data.capped ? ` (newest of ${data.consolidated_count} after cap ${data.article_cap})` : "") +
+      ` from ${data.article_count} processed item(s) for ${SECTORS[sector] || sector}.`;
     if (!data.article_count) showToast("No processed articles available for the selected week.", true);
   } catch (e) {
     showToast(e.message, true);
