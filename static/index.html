@@ -244,34 +244,95 @@
     margin: 8px 0 28px;
   }
   .intel-strip {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 12px;
-    margin: 0;
-  }
-  .panel-intel { margin: 0 0 18px; }
-  .intel-hub-head {
     display: flex;
-    justify-content: space-between;
+    gap: 10px;
+    overflow-x: auto;
+    padding: 0 2px 4px;
+    scroll-snap-type: x proximity;
+  }
+  .panel-intel {
+    margin: 0 0 14px;
+    padding: 0;
+    overflow: hidden;
+  }
+  .intel-hub-toggle {
+    width: 100%;
+    display: flex;
     align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-bottom: 14px;
+    gap: 10px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    padding: 11px 16px;
+    min-height: 48px;
+    color: var(--text);
+  }
+  .intel-hub-toggle:hover { background: var(--surface-2); }
+  .intel-hub-kicker {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .intel-hub-hint {
+    flex: 1;
+    font-size: 0.84rem;
+    color: var(--text-muted);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .intel-hub-chevron {
+    color: var(--teal);
+    font-size: 0.85rem;
+    transition: transform 0.15s ease;
+  }
+  .panel-intel.is-open .intel-hub-chevron { transform: rotate(180deg); }
+  .intel-hub-body {
+    display: none;
+    padding: 0 14px 14px;
+    border-top: 1px solid var(--border);
+  }
+  .panel-intel.is-open .intel-hub-body { display: block; }
+  .intel-hub-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin: 8px 0 10px;
   }
   .intel-card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px 18px;
+    border-radius: 12px;
+    padding: 12px 14px;
     box-shadow: var(--shadow-sm);
     text-decoration: none;
     color: inherit;
-    display: block;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 0 0 240px;
+    max-width: 240px;
+    min-height: 0;
+    scroll-snap-align: start;
   }
   .intel-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
-  .intel-card h3 { margin: 0 0 6px; font-size: 0.95rem; color: var(--primary); }
-  .intel-card p { margin: 0; color: var(--text-muted); font-size: 0.84rem; line-height: 1.45; }
-  .intel-card .intel-meta { font-size: 0.72rem; font-weight: 600; color: var(--teal); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .intel-card h3 { margin: 0; font-size: 0.92rem; color: var(--primary); }
+  .intel-card p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .intel-card .intel-meta { font-size: 0.68rem; font-weight: 600; color: var(--teal); text-transform: uppercase; letter-spacing: 0.04em; }
   .btn.loading { pointer-events: none; opacity: 0.7; }
 
   .field-label {
@@ -910,11 +971,17 @@
   <nav class="sector-nav" id="tabs"></nav>
 
   <section class="panel panel-intel" id="intelHub">
-    <div class="intel-hub-head">
-      <p class="panel-title" style="margin:0;">Intelligence Hub</p>
-      <a class="btn btn-ghost btn-sm" href="/intelligence">Browse all weeks</a>
+    <button type="button" class="intel-hub-toggle" id="intelHubToggle" aria-expanded="false" onclick="toggleIntelHub()">
+      <span class="intel-hub-kicker">Intelligence Hub</span>
+      <span class="intel-hub-hint" id="intelHubHint">Click to view weekly sector briefs</span>
+      <span class="intel-hub-chevron" aria-hidden="true">▾</span>
+    </button>
+    <div class="intel-hub-body" id="intelHubBody">
+      <div class="intel-hub-actions">
+        <a class="btn btn-ghost btn-sm" href="/intelligence">Browse all weeks</a>
+      </div>
+      <div class="intel-strip" id="intelStrip"></div>
     </div>
-    <div class="intel-strip" id="intelStrip"></div>
   </section>
 
   <main>
@@ -1277,10 +1344,12 @@ function cardSummary(a) {
 
 async function loadIntelligenceBriefs() {
   const wrap = document.getElementById("intelStrip");
+  const hint = document.getElementById("intelHubHint");
   if (!wrap) return;
   try {
     const briefs = await (await fetch(API + "/api/intelligence/briefs?limit=12")).json();
     if (!Array.isArray(briefs) || !briefs.length) {
+      if (hint) hint.textContent = "Weekly briefs will appear here when published";
       wrap.innerHTML = `<div class="intel-card">
         <div class="intel-meta">This week</div>
         <h3>No briefs published yet</h3>
@@ -1288,8 +1357,10 @@ async function loadIntelligenceBriefs() {
       </div>`;
       return;
     }
-    wrap.innerHTML = briefs.slice(0, 8).map((b) => {
-      const summary = (b.executive_summary || "Open for the full sector brief.").slice(0, 280);
+    const shown = briefs.slice(0, 8);
+    if (hint) hint.textContent = `${shown.length} weekly brief${shown.length === 1 ? "" : "s"} · click to open`;
+    wrap.innerHTML = shown.map((b) => {
+      const summary = (b.executive_summary || "Open for the full sector brief.").slice(0, 180);
       return `<a class="intel-card" href="/intelligence?report=${encodeURIComponent(b.id)}">
         <div class="intel-meta">${escapeHtml(b.sector_label || b.sector)} · ${escapeHtml(b.period_label || b.start_date || "")}</div>
         <h3>${escapeHtml(b.sector_label || "Sector brief")}</h3>
@@ -1299,6 +1370,15 @@ async function loadIntelligenceBriefs() {
   } catch (_) {
     wrap.innerHTML = "";
   }
+}
+
+function toggleIntelHub() {
+  const hub = document.getElementById("intelHub");
+  const btn = document.getElementById("intelHubToggle");
+  if (!hub || !btn) return;
+  const open = !hub.classList.contains("is-open");
+  hub.classList.toggle("is-open", open);
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 async function toggleBackendPanel() {
