@@ -22,6 +22,8 @@ SECTOR_LABELS = {
     "e_logistics": "E-Logistics",
     "fintech": "Fintech",
     "mobile_electronics": "Mobile & Electronics",
+    "chocolate": "Chocolate",
+    "media_entertainment": "Media & Entertainment",
     "cross_sector": "Cross-Sector / Indirect",
 }
 
@@ -220,6 +222,8 @@ SECTOR_KEYWORDS = {
     ],
     "fintech": [],  # matched via sector_taxonomies.FINTECH_TAXONOMY
     "mobile_electronics": [],  # matched via sector taxonomies
+    "chocolate": [],  # matched via sector_taxonomies.CHOCOLATE_TAXONOMY
+    "media_entertainment": [],  # matched via sector_taxonomies.MEDIA_ENTERTAINMENT_TAXONOMY
 }
 
 GEMINI_SECTORS = list(SECTOR_KEYWORDS.keys()) + ["cross_sector"]
@@ -251,6 +255,16 @@ NEWSAPI_QUERIES = {
     "e_logistics": "logistics India OR Delhivery OR last mile delivery India OR Shiprocket",
     "fintech": "fintech India OR PhonePe OR Paytm OR Razorpay OR UPI India OR digital lending India",
     "mobile_electronics": "smartphone India OR electronics retail India OR Samsung India OR Apple India",
+    "chocolate": (
+        "Cadbury India OR Mondelez India OR KitKat India OR Ferrero India "
+        "OR Kinder Joy India OR Amul chocolate OR Fabelle OR Campco chocolate "
+        "OR chocolate market India OR confectionery India OR cocoa prices India"
+    ),
+    "media_entertainment": (
+        "JioHotstar OR JioCinema OR Disney Star India OR Sony LIV OR ZEE5 "
+        "OR PVR INOX OR BookMyShow OR MX Player OR Netflix India "
+        "OR Indian OTT OR Bollywood box office OR Zee Entertainment"
+    ),
 }
 
 # Simpler queries for GNews.io (works better than long boolean strings)
@@ -268,6 +282,14 @@ GNEWS_QUERIES = {
     "e_logistics": "Delhivery OR logistics India OR last mile delivery",
     "fintech": "PhonePe OR Paytm OR Razorpay OR UPI India OR fintech India",
     "mobile_electronics": "smartphone India OR Samsung India OR Apple India",
+    "chocolate": (
+        "Cadbury India OR Mondelez OR KitKat India OR Amul chocolate "
+        "OR Ferrero Rocher India OR Fabelle OR chocolate market India"
+    ),
+    "media_entertainment": (
+        "JioHotstar OR JioCinema OR ZEE5 OR Sony LIV OR PVR INOX "
+        "OR BookMyShow OR Netflix India OR Indian OTT"
+    ),
 }
 
 # Google News RSS — India-focused queries (not the same as GNews.io)
@@ -284,6 +306,11 @@ INDIA_NEWS_MARKERS = (
     "jiomart", "snapdeal", "shopsy", "ondc", "phonepe", "razorpay", "bharatpe",
     "ola ", "rapido", "paytm", "upi ", "rupee", "sebi", "rbi ", "gst ",
     ".in/", "livemint", "economictimes", "business-standard",
+    "cadbury", "mondelez", "kitkat", "ferrero", "kinder joy", "fabelle",
+    "theobroma", "amul chocolate",
+    "jiocinema", "jiohotstar", "jiostar", "disney star", "zee5", "sonyliv",
+    "sony liv", "pvr inox", "bookmyshow", "mx player", "jiosaavn",
+    "t-series", "network18", "sun tv",
 )
 
 
