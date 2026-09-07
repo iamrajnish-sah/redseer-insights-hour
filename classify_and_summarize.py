@@ -61,6 +61,10 @@ aggregators (Ola, Uber India, Rapido, Namma Yatri, BluSmart, inDrive, Meru, etc.
 regulation/pricing/driver partners, OR urban events that plausibly change ride demand \
 (elections, exams, concerts, IPL, metro/transport strikes or disruption in major cities). \
 Do NOT tag ride_hailing for Ola Electric/scooters, generic mobility, or unrelated "Ola" mentions.
+For media_entertainment, ONLY tag short-form/microdrama and audio streaming in India \
+(Kuku TV, Kuku FM, StoryTV, Tadka, Pocket FM, Pratilipi, JioSaavn, Gaana, Wynk, \
+Spotify India, Audible, similar platforms). Do NOT tag Bollywood movie releases, \
+box office, multiplexes, theatrical, or generic long-form OTT catalogues.
 {gemini_taxonomy_rules()}
 For each article given, decide:
 1. is_relevant: true if the article is about, or materially affects, any of these \

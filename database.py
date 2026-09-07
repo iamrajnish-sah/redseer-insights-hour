@@ -713,3 +713,51 @@ def reconcile_ride_hailing_tags():
                 removed += 1
 
     return {"added": added, "removed": removed}
+
+
+def reconcile_taxonomy_tags(sector, remove_unmatched=False):
+    """Add (and optionally remove) a taxonomy sector tag on already-stored news."""
+    from sector_keywords import normalize_sector_tags
+    from sector_taxonomies import TAXONOMIES, taxonomy_matches
+
+    if sector not in TAXONOMIES:
+        raise ValueError(f"Unknown taxonomy sector: {sector}")
+
+    added = 0
+    removed = 0
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT id, title, subtitle, body, summary, sectors, relevant
+               FROM articles
+               WHERE duplicate_of IS NULL"""
+        ).fetchall()
+        for row in rows:
+            sectors = normalize_sector_tags(json.loads(row["sectors"] or "[]"))
+            should_tag = taxonomy_matches(
+                sector,
+                row["title"],
+                row["body"] or row["summary"] or "",
+                row["subtitle"] or "",
+            )
+            has_tag = sector in sectors
+            if should_tag and not has_tag:
+                sectors.append(sector)
+                conn.execute(
+                    "UPDATE articles SET sectors = ?, relevant = 1 WHERE id = ?",
+                    (json.dumps(sectors), row["id"]),
+                )
+                added += 1
+            elif remove_unmatched and has_tag and not should_tag:
+                sectors = [s for s in sectors if s != sector]
+                if sectors:
+                    conn.execute(
+                        "UPDATE articles SET sectors = ? WHERE id = ?",
+                        (json.dumps(sectors), row["id"]),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE articles SET sectors = '[]', relevant = 0 WHERE id = ?",
+                        (row["id"],),
+                    )
+                removed += 1
+    return {"sector": sector, "added": added, "removed": removed}

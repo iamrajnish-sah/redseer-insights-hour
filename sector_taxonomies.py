@@ -512,52 +512,69 @@ MEDIA_ENTERTAINMENT_TAXONOMY = SectorTaxonomy(
     label="Media & Entertainment",
     priority=89,
     primary_companies=(
-        "jiohotstar", "jio cinema", "jiocinema", "jio star", "jiostar",
-        "disney star", "star india", "hotstar", "sony liv", "sonyliv",
-        "culver max", "zee5", "zee entertainment", "zee media",
-        "sun tv", "sun nxt", "pvr inox", "pvrinx", "pvr cinemas", "inox leisure",
-        "bookmyshow", "mx player", "jiosaavn", "gaana", "wynk",
-        "saregama", "t-series", "yash raj films", "dharma productions",
-        "shemaroo", "eros now", "aha ott", "hoichoi",
+        "kuku tv", "kukutv", "kuku fm", "kukufm",
+        "storytv", "story tv", "story tv dailies",
+        "pocket fm", "pocketfm",
+        "pratilipi", "pratilipi fm",
+        "rocket reels",
+        "jiosaavn", "jio saavn",
+        "gaana",
+        "wynk music", "wynk",
+        "storytel",
+        "zee5 bullet", "kutting", "fatafat",
+        "hoichoi sooper",
+        "hungama music", "hungama digital",
+        "hotstar tadka", "jiohotstar tadka",
     ),
     contextual_companies=(
-        "netflix india", "prime video", "amazon prime video", "spotify india",
-        "youtube india", "reliance entertainment", "viacom18", "colors tv",
-        "sony pictures networks", "network18", "tv18", "ndtv", "times internet",
+        "tadka", "tadka app",
+        "spotify india", "audible india", "amazon music",
+        "kuku",
+        "moj app", "josh app", "sharechat",
+        "youtube shorts", "dramabox", "reelshort",
     ),
     strong_phrases=(
-        "ott platform", "ott streaming", "streaming wars", "media rights",
-        "broadcasting", "box office collection", "box office india",
-        "multiplex chain", "film exhibition", "theatrical release",
-        "music streaming india", "indian entertainment", "media and entertainment",
-        "m&e sector", "trai broadcasting", "barc ratings",
+        "microdrama", "micro-drama", "micro drama",
+        "short-form video", "short form video", "short-form content",
+        "short drama", "vertical drama", "vertical series",
+        "audio storytelling", "audiobook platform", "audio series",
+        "music streaming india", "podcast platform india",
+        "short-form entertainment", "bite-sized series",
     ),
     contextual_phrases=(
-        "ott", "streaming", "multiplex", "box office", "film studio",
-        "tv ratings", "broadcast", "content slate", "original series",
-        "music label", "entertainment company",
+        "microdrama", "short drama", "audio streaming", "audiobook",
+        "music streaming", "podcast", "short-form", "short form",
+        "vertical video", "mini series",
     ),
     commerce_context=(
-        "india", "subscription", "viewership", "audience", "content",
-        "studio", "release", "rights", "advertising", "revenue", "platform",
+        "microdrama", "short drama", "short-form", "short form",
+        "audio storytelling", "audiobook", "music streaming",
+        "podcast", "vertical series", "kuku", "storytv", "pocket fm",
+        "subscriber", "streaming", "app", "jiohotstar", "hotstar tadka",
     ),
     support_phrases=(
-        "subscriber", "ad revenue", "content investment", "theatrical",
-        "sports rights", "ipl media", "trai", "mib", "fipb",
+        "downloads", "paying subscribers", "content slate",
+        "originals", "monetisation", "monetization", "ipo",
     ),
     competitors=(
-        "netflix", "amazon", "google", "meta", "youtube",
+        "spotify", "audible", "youtube", "amazon",
     ),
     competitor_context=(
-        "ott", "streaming", "hotstar", "jiocinema", "prime video",
-        "media rights", "box office", "india entertainment",
+        "microdrama", "short drama", "audio streaming", "audiobook",
+        "kuku", "storytv", "pocket fm", "music streaming",
     ),
     exclusions=(
+        "box office", "box-office", "theatrical release",
+        "multiplex", "pvr inox", "pvr cinemas", "bookmyshow",
+        "bollywood release", "movie release", "film review",
+        "movie collection", "opening day collection", "trailer launch",
+        "cbfc", "film certification", "yash raj films", "dharma productions",
         "the media reported", "according to media", "social media post",
-        "influencer marketing", "ride hailing", "concert crowd",
-        "food delivery", "ecommerce marketplace", "smartphone launch",
+        "tadka dal", "tadka masala", "jeera tadka", "recipe",
+        "influencer marketing", "ride hailing", "food delivery",
         "fantasy sports app", "dream11",
     ),
+    primary_overrides_exclusions=True,
     min_confidence=0.80,
 )
 
@@ -792,7 +809,9 @@ def gemini_taxonomy_rules():
             "- OVERLAP RULE: return one most relevant sector whenever possible. "
             "Specialist intent overrides broad e_commerce (e.g. Flipkart Minutes -> "
             "quick_commerce; Nykaa cosmetics -> bpc; Nykaa Fashion -> fashion; "
-            "Cadbury/Mondelez -> chocolate; JioHotstar/PVR INOX -> media_entertainment). "
+            "Cadbury/Mondelez -> chocolate; Kuku TV/StoryTV/Tadka/Pocket FM -> "
+            "media_entertainment). Do not tag media_entertainment for Bollywood "
+            "movie releases, box office, or multiplex news. "
             "Use multiple sectors only when the article materially covers both.",
             '- For every tagged sector return "sector_confidence" from 0-100. '
             "Do not tag any sector below 80%; use cross_sector (Other) when the "
