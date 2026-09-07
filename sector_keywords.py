@@ -261,9 +261,9 @@ NEWSAPI_QUERIES = {
         "OR chocolate market India OR confectionery India OR cocoa prices India"
     ),
     "media_entertainment": (
-        "JioHotstar OR JioCinema OR Disney Star India OR Sony LIV OR ZEE5 "
-        "OR PVR INOX OR BookMyShow OR MX Player OR Netflix India "
-        "OR Indian OTT OR Bollywood box office OR Zee Entertainment"
+        "Kuku TV OR Kuku FM OR StoryTV OR \"Story TV\" OR Tadka microdrama "
+        "OR Pocket FM OR Pratilipi OR JioSaavn OR Gaana OR Wynk "
+        "OR microdrama India OR \"short drama\" India OR \"audio streaming\" India"
     ),
 }
 
@@ -287,8 +287,8 @@ GNEWS_QUERIES = {
         "OR Ferrero Rocher India OR Fabelle OR chocolate market India"
     ),
     "media_entertainment": (
-        "JioHotstar OR JioCinema OR ZEE5 OR Sony LIV OR PVR INOX "
-        "OR BookMyShow OR Netflix India OR Indian OTT"
+        '"Kuku TV" OR "Kuku FM" OR StoryTV OR "Pocket FM" OR Pratilipi '
+        "OR JioSaavn OR microdrama OR \"short drama\" India"
     ),
 }
 
@@ -297,6 +297,16 @@ GOOGLE_NEWS_QUERIES = {
     k: f"({v}) India when:7d"
     for k, v in GNEWS_QUERIES.items()
 }
+GOOGLE_NEWS_QUERIES["chocolate"] = (
+    "(Cadbury India OR Mondelez India OR KitKat India OR Fabelle OR "
+    '"Amul chocolate" OR Ferrero India OR "Kinder Joy" OR '
+    "confectionery India OR cocoa prices India) when:30d"
+)
+GOOGLE_NEWS_QUERIES["media_entertainment"] = (
+    '("Kuku TV" OR "Kuku FM" OR StoryTV OR "Story TV" OR "Pocket FM" '
+    "OR Pratilipi OR Tadka microdrama OR JioSaavn OR microdrama India "
+    'OR "short drama" OR "audio streaming" India) when:7d'
+)
 NEWSAPI_HEADLINE_QUERIES = dict(GNEWS_QUERIES)
 
 INDIA_NEWS_MARKERS = (
@@ -308,9 +318,9 @@ INDIA_NEWS_MARKERS = (
     ".in/", "livemint", "economictimes", "business-standard",
     "cadbury", "mondelez", "kitkat", "ferrero", "kinder joy", "fabelle",
     "theobroma", "amul chocolate",
-    "jiocinema", "jiohotstar", "jiostar", "disney star", "zee5", "sonyliv",
-    "sony liv", "pvr inox", "bookmyshow", "mx player", "jiosaavn",
-    "t-series", "network18", "sun tv",
+    "kuku tv", "kuku fm", "kukutv", "kukufm", "storytv", "story tv",
+    "pocket fm", "pratilipi", "jiosaavn", "wynk", "microdrama",
+    "jiocinema", "jiohotstar", "zee5", "sonyliv",
 )
 
 

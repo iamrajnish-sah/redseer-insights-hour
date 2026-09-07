@@ -1187,9 +1187,29 @@ async function init() {
   buildTabs();
   syncDateFilterButtons();
   await loadFeedSummary();
+  await backfillAndFetchNewSectors();
   await loadArticles();
   await loadIntelligenceBriefs();
   await maybeAutoRefresh();
+}
+
+async function backfillAndFetchNewSectors() {
+  try {
+    const backfillResp = await fetch(API + "/api/backfill-new-sectors", { method: "POST" });
+    const backfill = await readJson(backfillResp);
+    if (backfillResp.ok && backfill.message) {
+      setStatus(backfill.message);
+    }
+  } catch (_) {}
+  try {
+    setStatus("Fetching past Chocolate news ...");
+    const resp = await fetch(API + "/api/refresh-sector/chocolate", { method: "POST" });
+    const data = await readJson(resp);
+    if (resp.ok) {
+      markNewArticles(data.new_ids || []);
+      if (data.message) setStatus(data.message);
+    }
+  } catch (_) {}
 }
 
 async function loadFeedSummary() {

@@ -19,7 +19,7 @@ import json
 import shutil
 import smtplib
 import tempfile
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Header, Request, Query
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
@@ -39,7 +39,12 @@ import admin_auth
 import auto_refresh
 from db_persist import restore_db, save_db, storage_status, enabled
 
-from sector_keywords import SECTOR_LABELS, GNEWS_QUERIES, normalize_sector_tags
+from sector_keywords import (
+    SECTOR_LABELS,
+    GNEWS_QUERIES,
+    GOOGLE_NEWS_QUERIES,
+    normalize_sector_tags,
+)
 
 app = FastAPI(title="Redseer Insight Hour")
 
@@ -1194,6 +1199,99 @@ async def send_email_digest(
         "results": payload.get("results", []),
         "message": f"Sent {len(sent)} sector email(s) for {pub_date}.",
     }
+
+
+def _refresh_one_sector(sector):
+    """Fetch only one sector (Google News RSS + GNews) so it can finish under 60s."""
+    if sector not in GNEWS_QUERIES:
+        raise HTTPException(404, f"Unknown sector '{sector}'")
+
+    rss_query = GOOGLE_NEWS_QUERIES.get(sector) or f"({GNEWS_QUERIES[sector]}) India when:7d"
+    feeds = [(f"Google News — {sector}", rss_ingest._google_news_url(rss_query))]
+    articles, rss_stats = rss_ingest.fetch_all(feeds=feeds)
+    gnews_articles, gnews_stats = [], {}
+    if os.environ.get("GNEWSAPIKEY") or os.environ.get("GNEWS_API_KEY"):
+        gnews_articles, gnews_stats = gnews_ingest.fetch_all(
+            queries={sector: GNEWS_QUERIES[sector]}
+        )
+    combined = articles + gnews_articles
+    inserted, new_ids, refreshed_ids = database.insert_articles(combined)
+    dedupe.run_all_dedupes()
+    database.persist()
+    return {
+        "sector": sector,
+        "inserted": inserted,
+        "refreshed": len(refreshed_ids),
+        "new_ids": new_ids,
+        "rss_matched": rss_stats.get("matched", len(articles)),
+        "gnews_matched": gnews_stats.get("matched", 0),
+        "errors": (rss_stats.get("errors") or []) + (gnews_stats.get("errors") or []),
+    }
+
+
+@app.post("/api/backfill-new-sectors")
+def backfill_new_sectors():
+    """Tag already-stored news for Chocolate; retag Media to short-form/audio only."""
+    if database.get_meta("new_sectors_backfill_v2") == "1":
+        return {
+            "skipped": True,
+            "message": "Chocolate and Media tags already backfilled.",
+        }
+    chocolate = database.reconcile_taxonomy_tags("chocolate", remove_unmatched=False)
+    media = database.reconcile_taxonomy_tags(
+        "media_entertainment", remove_unmatched=True
+    )
+    database.set_meta("new_sectors_backfill_v2", "1")
+    database.persist()
+    return {
+        "chocolate": chocolate,
+        "media_entertainment": media,
+        "skipped": False,
+        "message": (
+            f"Chocolate: {chocolate['added']} existing articles tagged. "
+            f"Media & Entertainment: {media['added']} short-form/audio tagged, "
+            f"{media['removed']} movie/Bollywood tags removed."
+        ),
+    }
+
+
+@app.post("/api/refresh-sector/{sector}")
+def refresh_one_sector(sector: str):
+    """Lightweight single-sector fetch for Chocolate (or any other sector)."""
+    if sector == "chocolate":
+        last = database.get_meta("chocolate_sector_fetch_at")
+        if last:
+            try:
+                parsed = datetime.fromisoformat(last.replace("Z", ""))
+                if datetime.utcnow() - parsed < timedelta(hours=12):
+                    return {
+                        "sector": sector,
+                        "skipped": True,
+                        "inserted": 0,
+                        "refreshed": 0,
+                        "new_ids": [],
+                        "message": "Chocolate news already fetched recently.",
+                    }
+            except ValueError:
+                pass
+    try:
+        result = _refresh_one_sector(sector)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, f"Sector refresh failed: {exc}") from exc
+    if sector == "chocolate":
+        database.set_meta(
+            "chocolate_sector_fetch_at",
+            datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        )
+        database.persist()
+    result["skipped"] = False
+    result["message"] = (
+        f"{SECTOR_LABELS.get(sector, sector)}: {result['inserted']} new, "
+        f"{result['refreshed']} updated."
+    )
+    return result
 
 
 @app.post("/api/reconcile-ride-hailing")
