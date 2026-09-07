@@ -453,6 +453,115 @@ MOBILE_ELECTRONICS_TAXONOMY = SectorTaxonomy(
 )
 
 
+CHOCOLATE_TAXONOMY = SectorTaxonomy(
+    sector="chocolate",
+    label="Chocolate",
+    priority=91,
+    primary_companies=(
+        "cadbury", "cadbury dairy milk", "cadbury celebrations", "cadbury bournville",
+        "mondelez india", "mondelez", "kitkat", "nestle munch", "nestle milkybar",
+        "ferrero india", "ferrero rocher", "kinder joy", "kinder india",
+        "fabelle", "itc fabelle", "amul chocolate", "campco", "lotte choco pie",
+        "lotte chocolate", "hershey india", "theobroma", "paul & mike", "mason & co",
+        "soklet", "kocoatrait", "country bean", "lotus chocolate",
+        "parle chocolate", "5 star chocolate", "perk chocolate", "gems chocolate",
+    ),
+    contextual_companies=(
+        "amul", "nestle india", "nestlé india", "itc limited", "ferrero",
+        "hershey", "mars india", "snickers", "galaxy chocolate",
+    ),
+    strong_phrases=(
+        "chocolate market", "chocolate brand", "chocolate maker",
+        "chocolate manufacturing", "chocolate factory", "confectionery india",
+        "indian confectionery", "cocoa processing", "cocoa grinding",
+        "dairy milk", "premium chocolate", "bean to bar", "bean-to-bar",
+        "chocolate launch", "chocolate sales",
+    ),
+    contextual_phrases=(
+        "chocolate", "cocoa", "confectionery", "cocoa beans", "cocoa duty",
+        "cocoa prices", "chocolate bar", "praline",
+    ),
+    commerce_context=(
+        "chocolate", "cocoa", "confectionery", "cocoa beans", "praline",
+        "dairy milk", "kitkat", "ferrero", "cadbury", "fabelle",
+        "bean to bar", "cocoa grinding", "festive gifting",
+    ),
+    support_phrases=(
+        "festive sales", "diwali gifting", "product launch", "market share",
+        "price hike", "cocoa inflation", "distribution", "modern trade",
+    ),
+    competitors=(
+        "unilever", "britannia", "parle", "itc",
+    ),
+    competitor_context=(
+        "chocolate", "confectionery", "cocoa", "cadbury", "kitkat",
+    ),
+    exclusions=(
+        "chocolate cake recipe", "hot chocolate weather", "hair color",
+        "chocolate brown", "restaurant dessert", "bakery cafe menu",
+        "food delivery", "cloud kitchen", "quick commerce",
+        "pharma", "cocoa butter lotion", "skincare",
+    ),
+    primary_overrides_exclusions=True,
+    min_confidence=0.80,
+)
+
+
+MEDIA_ENTERTAINMENT_TAXONOMY = SectorTaxonomy(
+    sector="media_entertainment",
+    label="Media & Entertainment",
+    priority=89,
+    primary_companies=(
+        "jiohotstar", "jio cinema", "jiocinema", "jio star", "jiostar",
+        "disney star", "star india", "hotstar", "sony liv", "sonyliv",
+        "culver max", "zee5", "zee entertainment", "zee media",
+        "sun tv", "sun nxt", "pvr inox", "pvrinx", "pvr cinemas", "inox leisure",
+        "bookmyshow", "mx player", "jiosaavn", "gaana", "wynk",
+        "saregama", "t-series", "yash raj films", "dharma productions",
+        "shemaroo", "eros now", "aha ott", "hoichoi",
+    ),
+    contextual_companies=(
+        "netflix india", "prime video", "amazon prime video", "spotify india",
+        "youtube india", "reliance entertainment", "viacom18", "colors tv",
+        "sony pictures networks", "network18", "tv18", "ndtv", "times internet",
+    ),
+    strong_phrases=(
+        "ott platform", "ott streaming", "streaming wars", "media rights",
+        "broadcasting", "box office collection", "box office india",
+        "multiplex chain", "film exhibition", "theatrical release",
+        "music streaming india", "indian entertainment", "media and entertainment",
+        "m&e sector", "trai broadcasting", "barc ratings",
+    ),
+    contextual_phrases=(
+        "ott", "streaming", "multiplex", "box office", "film studio",
+        "tv ratings", "broadcast", "content slate", "original series",
+        "music label", "entertainment company",
+    ),
+    commerce_context=(
+        "india", "subscription", "viewership", "audience", "content",
+        "studio", "release", "rights", "advertising", "revenue", "platform",
+    ),
+    support_phrases=(
+        "subscriber", "ad revenue", "content investment", "theatrical",
+        "sports rights", "ipl media", "trai", "mib", "fipb",
+    ),
+    competitors=(
+        "netflix", "amazon", "google", "meta", "youtube",
+    ),
+    competitor_context=(
+        "ott", "streaming", "hotstar", "jiocinema", "prime video",
+        "media rights", "box office", "india entertainment",
+    ),
+    exclusions=(
+        "the media reported", "according to media", "social media post",
+        "influencer marketing", "ride hailing", "concert crowd",
+        "food delivery", "ecommerce marketplace", "smartphone launch",
+        "fantasy sports app", "dream11",
+    ),
+    min_confidence=0.80,
+)
+
+
 TAXONOMIES = {
     taxonomy.sector: taxonomy
     for taxonomy in (
@@ -465,6 +574,8 @@ TAXONOMIES = {
         FINTECH_TAXONOMY,
         MOBILE_ELECTRONICS_TAXONOMY,
         VALUE_COMMERCE_TAXONOMY,
+        CHOCOLATE_TAXONOMY,
+        MEDIA_ENTERTAINMENT_TAXONOMY,
     )
 }
 
@@ -680,7 +791,8 @@ def gemini_taxonomy_rules():
             "social-commerce, reseller, or price-war intent.",
             "- OVERLAP RULE: return one most relevant sector whenever possible. "
             "Specialist intent overrides broad e_commerce (e.g. Flipkart Minutes -> "
-            "quick_commerce; Nykaa cosmetics -> bpc; Nykaa Fashion -> fashion). "
+            "quick_commerce; Nykaa cosmetics -> bpc; Nykaa Fashion -> fashion; "
+            "Cadbury/Mondelez -> chocolate; JioHotstar/PVR INOX -> media_entertainment). "
             "Use multiple sectors only when the article materially covers both.",
             '- For every tagged sector return "sector_confidence" from 0-100. '
             "Do not tag any sector below 80%; use cross_sector (Other) when the "

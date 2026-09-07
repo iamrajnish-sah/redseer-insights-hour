@@ -3,7 +3,8 @@ classify_and_summarize.py  (Gemini version)
 
 Uses the Gemini API's free tier to, for each article:
   1. Decide if it's relevant to e-commerce / quick-commerce / ride-hailing /
-     value-commerce in India (or news that materially affects those sectors)
+     value-commerce / chocolate / media & entertainment in India
+     (or news that materially affects those sectors)
   2. Tag it with the relevant sector(s)
   3. Write a 2-3 line summary
 
@@ -52,8 +53,8 @@ SECTORS = GEMINI_SECTORS
 
 SYSTEM_PROMPT = f"""You are a news analyst for an Indian company tracking commerce and \
 consumer sectors: e-commerce, quick commerce, ride hailing, value commerce, food delivery, \
-fashion, beauty & personal care (BPC), e-logistics, fintech, mobile & electronics, and cross-sector \
-macro/indirect impacts.
+fashion, beauty & personal care (BPC), e-logistics, fintech, mobile & electronics, chocolate, \
+media & entertainment, and cross-sector macro/indirect impacts.
 
 For ride hailing in India, ONLY tag ride_hailing when the story is about cab/bike/auto \
 aggregators (Ola, Uber India, Rapido, Namma Yatri, BluSmart, inDrive, Meru, etc.), their \
