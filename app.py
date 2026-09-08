@@ -699,6 +699,20 @@ def get_articles(sector: str = None, pub_date: str = None, search: str = None, d
     return articles
 
 
+@app.delete("/api/admin/articles/{article_id}")
+def admin_delete_article(article_id: int, _: None = Depends(admin_auth.require_admin)):
+    """Remove a news card. Admin only. The same story will not be re-ingested."""
+    deleted = database.delete_article(article_id)
+    if not deleted:
+        raise HTTPException(404, "Article not found")
+    database.persist()
+    return {
+        "ok": True,
+        **deleted,
+        "message": "Article deleted. It will not come back on the next refresh.",
+    }
+
+
 @app.get("/api/feed-summary")
 def feed_summary():
     """Public counts + last auto-refresh time (no admin password)."""
@@ -1179,48 +1193,62 @@ async def send_email_digest(
     pub_date: str = None,
     _: None = Depends(admin_auth.require_admin),
 ):
-    """Send digest emails to active subscribers for selected sector(s)."""
+    """Send digest emails to active subscribers for selected sector(s) and dates."""
     if not pub_date:
         pub_date = str(date.today())
 
     sectors = None
+    start_date = None
+    end_date = None
     try:
         body = await request.json()
         sectors = body.get("sectors")
+        start_date = body.get("start_date")
+        end_date = body.get("end_date")
     except Exception:
         sectors = None
 
     try:
-        payload = email_digest.send_sector_digests(pub_date, sectors=sectors)
-    except RuntimeError as e:
+        payload = email_digest.send_sector_digests(
+            pub_date,
+            sectors=sectors,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except (RuntimeError, ValueError) as e:
         raise HTTPException(400, str(e))
     except smtplib.SMTPException as e:
         raise HTTPException(500, f"Email failed: {e}")
 
     mode = payload.get("mode", "legacy")
+    period = payload.get("pub_date") or pub_date
     if mode == "subscribers":
         sent = [r for r in payload.get("results", []) if r.get("status") == "sent"]
         skipped = [r for r in payload.get("results", []) if r.get("status") == "skipped"]
         return {
-            "pub_date": pub_date,
+            "pub_date": period,
+            "start_date": payload.get("start_date"),
+            "end_date": payload.get("end_date"),
             "mode": mode,
             "sent_count": len(sent),
             "skipped_count": len(skipped),
             "sectors": payload.get("sectors", []),
             "results": payload.get("results", []),
-            "message": f"Sent {len(sent)} email(s) to subscribers for {pub_date}.",
+            "message": f"Sent {len(sent)} email(s) to subscribers for {period}.",
         }
 
     sent = [r for r in payload.get("results", []) if r.get("status") == "sent"]
     skipped = [r for r in payload.get("results", []) if r.get("status") == "skipped"]
     return {
-        "pub_date": pub_date,
+        "pub_date": period,
+        "start_date": payload.get("start_date"),
+        "end_date": payload.get("end_date"),
         "mode": mode,
         "sent_count": len(sent),
         "skipped_count": len(skipped),
         "sectors": payload.get("sectors", []),
         "results": payload.get("results", []),
-        "message": f"Sent {len(sent)} sector email(s) for {pub_date}.",
+        "message": f"Sent {len(sent)} sector email(s) for {period}.",
     }
 
 

@@ -481,6 +481,43 @@
     font: inherit;
     background: #fff;
   }
+  .date-range-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .date-range-row .form-input { flex: 1; }
+  .date-range-row span {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    flex-shrink: 0;
+  }
+  .btn-card-delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 7px 10px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #b91c1c;
+    background: #fff;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .btn-card-delete:hover {
+    background: #fef2f2;
+    border-color: #f87171;
+  }
+  .card-footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
   .sector-check-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
@@ -1034,7 +1071,15 @@
 <div class="modal-backdrop" id="emailCampaignModal" onclick="if(event.target===this)closeEmailCampaignModal()">
   <div class="modal" role="dialog" aria-labelledby="emailCampaignTitle">
     <h2 id="emailCampaignTitle">Send email campaign</h2>
-    <p class="modal-sub">Active subscribers who follow any selected sector will receive one email each.</p>
+    <p class="modal-sub">Active subscribers who follow any selected sector will receive one email each. Choose the news dates to include.</p>
+    <div class="form-field">
+      <label>News dates *</label>
+      <div class="date-range-row">
+        <input class="form-input" id="emailStartDate" type="date" aria-label="From date">
+        <span>to</span>
+        <input class="form-input" id="emailEndDate" type="date" aria-label="To date">
+      </div>
+    </div>
     <div class="form-field">
       <label>Select sector(s) *</label>
       <div class="sector-check-grid" id="emailSectorGrid"></div>
@@ -1049,6 +1094,7 @@
 <script>
 const API = "";
 let adminPassword = sessionStorage.getItem("adminPassword") || "";
+let adminUnlocked = false;
 let SECTORS = {};
 let currentSector = "";
 let articlesCache = [];
@@ -1186,12 +1232,33 @@ async function init() {
   SECTORS = await (await fetch(API + "/api/sectors")).json();
   buildTabs();
   syncDateFilterButtons();
+  await restoreAdminSession();
   await loadFeedSummary();
   await backfillAndFetchNewSectors();
   await mergeDuplicateStories();
   await loadArticles();
   await loadIntelligenceBriefs();
   await maybeAutoRefresh();
+}
+
+async function restoreAdminSession() {
+  try {
+    const status = await (await fetch(API + "/api/admin/status")).json();
+    if (!status.protected) {
+      adminUnlocked = true;
+      return;
+    }
+    if (!adminPassword) return;
+    const check = await fetch(API + "/api/admin/verify", {
+      method: "POST",
+      headers: adminHeaders(),
+    });
+    adminUnlocked = check.ok;
+    if (!check.ok) {
+      adminPassword = "";
+      sessionStorage.removeItem("adminPassword");
+    }
+  } catch (_) {}
 }
 
 async function mergeDuplicateStories() {
@@ -1268,10 +1335,12 @@ async function adminFetch(url, options = {}) {
   if (resp.status === 401) {
     sessionStorage.removeItem("adminPassword");
     adminPassword = "";
+    adminUnlocked = false;
     document.getElementById("backendPanel").classList.remove("open");
     document.getElementById("btnBackendToggle").setAttribute("aria-expanded", "false");
     document.getElementById("btnBackendToggle").textContent = "⚙ Backend Management";
     setStatus("Admin password required or expired. Open Backend Management again.", true);
+    renderArticles();
   }
   return resp;
 }
@@ -1288,13 +1357,21 @@ async function readJson(resp) {
 
 async function ensureAdminAccess() {
   const status = await (await fetch(API + "/api/admin/status")).json();
-  if (!status.protected) return true;
+  if (!status.protected) {
+    adminUnlocked = true;
+    renderArticles();
+    return true;
+  }
   if (adminPassword) {
     const check = await fetch(API + "/api/admin/verify", {
       method: "POST",
       headers: adminHeaders(),
     });
-    if (check.ok) return true;
+    if (check.ok) {
+      adminUnlocked = true;
+      renderArticles();
+      return true;
+    }
   }
   const pwd = prompt("Enter admin password to open Backend Management:");
   if (!pwd) return false;
@@ -1308,6 +1385,8 @@ async function ensureAdminAccess() {
   }
   adminPassword = pwd;
   sessionStorage.setItem("adminPassword", pwd);
+  adminUnlocked = true;
+  renderArticles();
   return true;
 }
 
@@ -1601,24 +1680,31 @@ function loadMoreArticles() {
 }
 
 async function sendSectorEmails() {
-  const pubDate = getSelectedPubDate();
+  const startDate = document.getElementById("emailStartDate").value;
+  const endDate = document.getElementById("emailEndDate").value;
   const sectors = getCheckedSectors("emailSectorGrid");
+  if (!startDate || !endDate) {
+    showToast("Choose a from date and a to date.", true);
+    return;
+  }
+  if (startDate > endDate) {
+    showToast("From date cannot be after the to date.", true);
+    return;
+  }
   if (!sectors.length) {
     showToast("Select at least one sector.", true);
     return;
   }
-  const dateLabel = document.getElementById("dateFilter").value
-    ? pubDate
-    : `${pubDate} (today — pick a date in calendar to send for another day)`;
+  const dateLabel = startDate === endDate ? startDate : `${startDate} to ${endDate}`;
   if (!confirm(`Send emails for ${dateLabel} to subscribers in:\n${sectors.map(s => SECTORS[s] || s).join(", ")}?`)) return;
 
   setBtnLoading("btnEmailSend", true);
   setStatus("Sending emails to subscribers ...");
   try {
-    const resp = await adminFetch(API + `/api/send-email?pub_date=${encodeURIComponent(pubDate)}`, {
+    const resp = await adminFetch(API + "/api/send-email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sectors }),
+      body: JSON.stringify({ sectors, start_date: startDate, end_date: endDate }),
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || "Email send failed");
@@ -1784,6 +1870,9 @@ function renderArticles() {
     const link = readUrl
       ? `<a class="btn-read-more" href="${escapeAttr(readUrl)}" target="_blank" rel="noopener">Read →</a>`
       : "";
+    const deleteBtn = adminUnlocked
+      ? `<button type="button" class="btn-card-delete" onclick="deleteArticle(${Number(a.id)})">Delete</button>`
+      : "";
     card.innerHTML = `
       ${buildFeedStrip(a)}
       ${buildCardMedia(a)}
@@ -1794,7 +1883,7 @@ function renderArticles() {
       </div>
       <div class="card-footer">
         <span class="card-meta-text">${displayText(sourceLabel)} · ${a.pub_date}</span>
-        ${link}
+        <span class="card-footer-actions">${deleteBtn}${link}</span>
       </div>
     `;
     grid.appendChild(card);
@@ -1891,8 +1980,37 @@ async function submitSubscribe() {
 async function openEmailCampaignModal() {
   const ok = await ensureAdminAccess();
   if (!ok) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const selected = document.getElementById("dateFilter").value || today;
+  const startEl = document.getElementById("emailStartDate");
+  const endEl = document.getElementById("emailEndDate");
+  startEl.max = today;
+  endEl.max = today;
+  startEl.value = selected;
+  endEl.value = selected;
   buildSectorCheckGrid("emailSectorGrid", Object.keys(SECTORS));
   document.getElementById("emailCampaignModal").classList.add("open");
+}
+
+async function deleteArticle(articleId) {
+  if (!adminUnlocked) return;
+  if (!confirm("Delete this news card? It will be removed for everyone and will not come back on refresh.")) return;
+  try {
+    const resp = await adminFetch(API + `/api/admin/articles/${articleId}`, { method: "DELETE" });
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || data.message || "Delete failed");
+    articlesCache = articlesCache.filter(a => a.id !== articleId);
+    updateTabCounts();
+    renderArticles();
+    if (document.getElementById("backendPanel").classList.contains("open")) {
+      await loadStats();
+    }
+    setStatus(data.message || "Article deleted.");
+    showToast("News card deleted.");
+  } catch (e) {
+    setStatus(e.message, true);
+    showToast(e.message, true);
+  }
 }
 
 function closeEmailCampaignModal() {
