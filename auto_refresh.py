@@ -11,6 +11,7 @@ metered, so they refresh less frequently.
 
 import os
 from datetime import datetime, timedelta, timezone
+import time
 
 import database
 import dedupe
@@ -141,11 +142,23 @@ def _persist():
     return save_db(database.DB_PATH)
 
 
+def _refresh_budget_seconds():
+    return float(
+        os.environ.get(
+            "REFRESH_BUDGET_SECONDS",
+            "50" if os.environ.get("VERCEL") else "240",
+        )
+    )
+
+
 def run_refresh(include_rss=True, include_gnews=True, include_newsapi=None):
     """Pull selected sources and dedupe.
 
     Refresh is insert-only: new articles are merged in by URL / title+date.
-    Existing articles are never deleted or overwritten."""
+    Existing articles are never deleted or overwritten.
+    On Vercel the work is time-budgeted so the function returns before the
+    platform kills it with FUNCTION_INVOCATION_TIMEOUT.
+    """
     if include_newsapi is None:
         include_newsapi = bool(os.environ.get("NEWSAPIKEY") or os.environ.get("NEWSAPI_KEY"))
 
@@ -154,6 +167,12 @@ def run_refresh(include_rss=True, include_gnews=True, include_newsapi=None):
     print(f"[refresh] before: {before_total} stored, {before_relevant} relevant")
 
     now = _utc_iso()
+    started = time.monotonic()
+    budget = _refresh_budget_seconds()
+
+    def remaining():
+        return budget - (time.monotonic() - started)
+
     summary = {
         "rss": None,
         "gnews": None,
@@ -162,6 +181,7 @@ def run_refresh(include_rss=True, include_gnews=True, include_newsapi=None):
         "total_refreshed": 0,
         "articles_before": before_total,
         "sources_run": [],
+        "timed_out_early": False,
     }
 
     if include_rss:
@@ -175,22 +195,36 @@ def run_refresh(include_rss=True, include_gnews=True, include_newsapi=None):
 
     gnews_key = os.environ.get("GNEWSAPIKEY") or os.environ.get("GNEWS_API_KEY")
     if include_gnews and gnews_key:
-        articles, stats = gnews_ingest.fetch_all()
-        inserted, _, refreshed = database.insert_articles(articles)
-        summary["gnews"] = {"inserted": inserted, "refreshed": len(refreshed), **stats}
-        summary["total_inserted"] += inserted
-        summary["total_refreshed"] += len(refreshed)
-        summary["sources_run"].append("gnews")
-        database.set_meta(META_LAST_GNEWS, now)
+        left = remaining()
+        if left < 12:
+            summary["gnews"] = {"skipped": True, "reason": "time_budget"}
+            summary["timed_out_early"] = True
+            print("[refresh] skipping GNews — not enough time left in function budget")
+        else:
+            os.environ["GNEWS_BUDGET_SECONDS"] = str(max(8, int(left - 10)))
+            articles, stats = gnews_ingest.fetch_all()
+            inserted, _, refreshed = database.insert_articles(articles)
+            summary["gnews"] = {"inserted": inserted, "refreshed": len(refreshed), **stats}
+            summary["total_inserted"] += inserted
+            summary["total_refreshed"] += len(refreshed)
+            summary["sources_run"].append("gnews")
+            database.set_meta(META_LAST_GNEWS, now)
 
     if include_newsapi and (os.environ.get("NEWSAPIKEY") or os.environ.get("NEWSAPI_KEY")):
-        articles, stats = newsapi_ingest.fetch_all()
-        inserted, _, refreshed = database.insert_articles(articles)
-        summary["newsapi"] = {"inserted": inserted, "refreshed": len(refreshed), **stats}
-        summary["total_inserted"] += inserted
-        summary["total_refreshed"] += len(refreshed)
-        summary["sources_run"].append("newsapi")
-        database.set_meta(META_LAST_NEWSAPI, now)
+        left = remaining()
+        if left < 10:
+            summary["newsapi"] = {"skipped": True, "reason": "time_budget"}
+            summary["timed_out_early"] = True
+            print("[refresh] skipping NewsAPI — not enough time left in function budget")
+        else:
+            os.environ["NEWSAPI_BUDGET_SECONDS"] = str(max(6, int(left - 6)))
+            articles, stats = newsapi_ingest.fetch_all()
+            inserted, _, refreshed = database.insert_articles(articles)
+            summary["newsapi"] = {"inserted": inserted, "refreshed": len(refreshed), **stats}
+            summary["total_inserted"] += inserted
+            summary["total_refreshed"] += len(refreshed)
+            summary["sources_run"].append("newsapi")
+            database.set_meta(META_LAST_NEWSAPI, now)
 
     dedupe_stats = dedupe.run_all_dedupes()
     summary["merged_duplicates"] = dedupe_stats["total_merged"]
@@ -215,6 +249,10 @@ def run_refresh(include_rss=True, include_gnews=True, include_newsapi=None):
 
 
 def try_auto_refresh(force=False, rss_only=False):
+    # Opening the dashboard must not run GNews + NewsAPI + RSS in one 60s
+    # function — that is what triggers FUNCTION_INVOCATION_TIMEOUT.
+    if os.environ.get("VERCEL") and not force:
+        rss_only = True
     due = due_sources()
     if rss_only:
         include = {"rss": True if force else due["rss"], "gnews": False, "newsapi": False}

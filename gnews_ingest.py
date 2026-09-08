@@ -16,7 +16,7 @@ from datetime import date
 
 from sector_keywords import GNEWS_QUERIES, match_sectors, make_summary
 from sector_taxonomies import TAXONOMIES
-from dedupe import normalize_title
+from dedupe import normalize_title, story_cluster_key
 
 GNEWS_URL = "https://gnews.io/api/v4/search"
 
@@ -157,12 +157,26 @@ def fetch_all(queries=None, max_results=None):
     all_articles = []
     seen_urls = set()
     seen_titles = set()
+    seen_clusters = set()
     raw_total = 0
     raw_from_api = 0
     skipped_dupes = 0
     errors = []
+    started = time.monotonic()
+    budget = float(
+        os.environ.get(
+            "GNEWS_BUDGET_SECONDS",
+            "40" if os.environ.get("VERCEL") else "120",
+        )
+    )
 
     for index, (label, q) in enumerate(queries.items()):
+        if time.monotonic() - started > budget:
+            errors.append(
+                f"stopped after {label} remaining sectors skipped (time budget {int(budget)}s)"
+            )
+            print(f"  [warning] GNews time budget hit after {index} sector(s)")
+            break
         if index > 0:
             time.sleep(_request_delay_seconds())
         print(f"Fetching GNews (IN): {label} ...")
@@ -175,16 +189,22 @@ def fetch_all(queries=None, max_results=None):
         for article in items:
             url = _normalize_url(article.url)
             title_key = normalize_title(article.title)
+            cluster = story_cluster_key(article.title)
             if url and url in seen_urls:
                 skipped_dupes += 1
                 continue
             if title_key and title_key in seen_titles:
                 skipped_dupes += 1
                 continue
+            if cluster and cluster in seen_clusters:
+                skipped_dupes += 1
+                continue
             if url:
                 seen_urls.add(url)
             if title_key:
                 seen_titles.add(title_key)
+            if cluster:
+                seen_clusters.add(cluster)
             all_articles.append(article)
             kept += 1
         print(f"  -> {kept} kept ({raw_count} from API)")
