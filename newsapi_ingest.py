@@ -28,7 +28,7 @@ from sector_keywords import (
     make_summary,
 )
 from sector_taxonomies import TAXONOMIES
-from dedupe import normalize_title
+from dedupe import normalize_title, story_cluster_key
 
 NEWSAPI_EVERYTHING_URL = "https://newsapi.org/v2/everything"
 NEWSAPI_TOP_URL = "https://newsapi.org/v2/top-headlines"
@@ -239,6 +239,7 @@ def fetch_query_everything_domains(query_label, query, api_key, page_size=25):
     articles = []
     seen_urls = set()
     seen_titles = set()
+    seen_clusters = set()
     raw_total = 0
     last_error = None
 
@@ -277,7 +278,7 @@ def fetch_query_everything_domains(query_label, query, api_key, page_size=25):
             prepared = _prepare_article(article, query_label)
             if prepared:
                 sector_items.append(prepared)
-        _dedupe_into(articles, seen_urls, seen_titles, sector_items)
+        _dedupe_into(articles, seen_urls, seen_titles, sector_items, seen_clusters)
 
     if not articles and last_error:
         return [], raw_total, last_error
@@ -316,22 +317,30 @@ def fetch_query_everything(query_label, query, api_key, page_size=25):
     return articles, len(raw), None
 
 
-def _dedupe_into(all_articles, seen_urls, seen_titles, items):
+def _dedupe_into(all_articles, seen_urls, seen_titles, items, seen_clusters=None):
     kept = 0
     skipped = 0
+    if seen_clusters is None:
+        seen_clusters = set()
     for article in items:
         url = _normalize_url(article.url)
         title_key = normalize_title(article.title)
+        cluster = story_cluster_key(article.title)
         if url and url in seen_urls:
             skipped += 1
             continue
         if title_key and title_key in seen_titles:
             skipped += 1
             continue
+        if cluster and cluster in seen_clusters:
+            skipped += 1
+            continue
         if url:
             seen_urls.add(url)
         if title_key:
             seen_titles.add(title_key)
+        if cluster:
+            seen_clusters.add(cluster)
         all_articles.append(article)
         kept += 1
     return kept, skipped
@@ -341,12 +350,26 @@ def _fetch_sector_queries(api_key, page_size, fetch_fn, label_prefix):
     all_articles = []
     seen_urls = set()
     seen_titles = set()
+    seen_clusters = set()
     raw_from_api = 0
     skipped_dupes = 0
     errors = []
     blocked = False
 
+    started = time.monotonic()
+    budget = float(
+        os.environ.get(
+            "NEWSAPI_BUDGET_SECONDS",
+            "25" if os.environ.get("VERCEL") else "90",
+        )
+    )
+
     for index, (label, q) in enumerate(NEWSAPI_QUERIES.items()):
+        if time.monotonic() - started > budget:
+            errors.append(
+                f"{label}: remaining sector queries skipped (time budget {int(budget)}s)"
+            )
+            break
         if index > 0:
             time.sleep(float(os.environ.get("NEWSAPI_REQUEST_DELAY", "0.6")))
         print(f"Fetching NewsAPI ({label_prefix}): {label} ...")
@@ -357,7 +380,9 @@ def _fetch_sector_queries(api_key, page_size, fetch_fn, label_prefix):
             if _everything_blocked(err):
                 blocked = True
                 break
-        kept, skipped = _dedupe_into(all_articles, seen_urls, seen_titles, items)
+        kept, skipped = _dedupe_into(
+            all_articles, seen_urls, seen_titles, items, seen_clusters
+        )
         skipped_dupes += skipped
         print(f"  -> {kept} kept ({raw_count} from API)")
 
@@ -369,6 +394,7 @@ def fetch_all_headlines_production(api_key, page_size):
     all_articles = []
     seen_urls = set()
     seen_titles = set()
+    seen_clusters = set()
     raw_from_api = 0
     skipped_dupes = 0
     errors = []
@@ -378,7 +404,9 @@ def fetch_all_headlines_production(api_key, page_size):
     raw_from_api += raw_count
     if err:
         errors.append(err)
-    kept, skipped = _dedupe_into(all_articles, seen_urls, seen_titles, items)
+    kept, skipped = _dedupe_into(
+        all_articles, seen_urls, seen_titles, items, seen_clusters
+    )
     skipped_dupes += skipped
     print(f"  -> {kept} kept ({raw_count} from API)")
 
@@ -389,7 +417,9 @@ def fetch_all_headlines_production(api_key, page_size):
         raw_from_api += raw_count
         if err:
             errors.append(err)
-        kept, skipped = _dedupe_into(all_articles, seen_urls, seen_titles, items)
+        kept, skipped = _dedupe_into(
+            all_articles, seen_urls, seen_titles, items, seen_clusters
+        )
         skipped_dupes += skipped
         print(f"  -> {kept} kept ({raw_count} from API)")
 

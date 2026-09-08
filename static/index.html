@@ -1188,9 +1188,20 @@ async function init() {
   syncDateFilterButtons();
   await loadFeedSummary();
   await backfillAndFetchNewSectors();
+  await mergeDuplicateStories();
   await loadArticles();
   await loadIntelligenceBriefs();
   await maybeAutoRefresh();
+}
+
+async function mergeDuplicateStories() {
+  try {
+    const resp = await fetch(API + "/api/dedupe-recent", { method: "POST" });
+    const data = await readJson(resp);
+    if (resp.ok && data.total_merged > 0) {
+      setStatus(data.message);
+    }
+  } catch (_) {}
 }
 
 async function backfillAndFetchNewSectors() {

@@ -131,10 +131,10 @@ def init_db():
 
 
 def _restore_cross_date_duplicates(conn):
-    """Un-mark articles wrongly merged as duplicates across different publish dates.
+    """Un-mark articles wrongly merged as duplicates across distant publish dates.
 
-    A recurring headline (e.g. a daily market wrap) is NOT a duplicate of last
-    week's story. Same-URL pairs are true duplicates and stay merged."""
+    Same story republished a day later (wire copy) stays merged. Recurring
+    daily wraps more than two days apart are restored."""
     cur = conn.execute(
         """UPDATE articles SET duplicate_of = NULL
            WHERE duplicate_of IS NOT NULL
@@ -142,6 +142,7 @@ def _restore_cross_date_duplicates(conn):
                SELECT d.id FROM articles d
                JOIN articles k ON k.id = d.duplicate_of
                WHERE d.pub_date IS NOT k.pub_date
+                 AND abs(julianday(d.pub_date) - julianday(k.pub_date)) > 2
                  AND (d.url IS NULL OR d.url = '' OR k.url IS NULL OR k.url = '' OR d.url != k.url)
              )"""
     )

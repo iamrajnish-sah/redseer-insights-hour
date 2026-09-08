@@ -1141,12 +1141,35 @@ def process_unprocessed(_: None = Depends(admin_auth.require_admin)):
 
 @app.post("/api/dedupe-all")
 def dedupe_all(_: None = Depends(admin_auth.require_admin)):
-    """Remove duplicate stories already stored (same URL or same headline)."""
+    """Remove duplicate stories already stored (same URL, headline, or same event)."""
     result = dedupe.run_all_dedupes()
     database.persist()
     return {
         **result,
         "message": f"Removed {result['total_merged']} duplicate(s).",
+    }
+
+
+@app.post("/api/dedupe-recent")
+def dedupe_recent():
+    """Fast same-story merge for recent Google News copies (safe on page load)."""
+    result = {
+        "url_merged": database.dedupe_by_url(),
+        "title_merged": database.dedupe_by_title(),
+        "fuzzy_merged": dedupe.find_and_mark_story_duplicates(days=21),
+    }
+    result["total_merged"] = (
+        result["url_merged"] + result["title_merged"] + result["fuzzy_merged"]
+    )
+    if result["total_merged"]:
+        database.persist()
+    return {
+        **result,
+        "message": (
+            f"Merged {result['total_merged']} duplicate stor{'y' if result['total_merged'] == 1 else 'ies'}."
+            if result["total_merged"]
+            else "No duplicate stories found."
+        ),
     }
 
 
