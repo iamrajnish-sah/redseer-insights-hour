@@ -1234,7 +1234,6 @@ async function init() {
   syncDateFilterButtons();
   await restoreAdminSession();
   await loadFeedSummary();
-  await backfillAndFetchNewSectors();
   await mergeDuplicateStories();
   await loadArticles();
   await loadIntelligenceBriefs();
@@ -1263,30 +1262,7 @@ async function restoreAdminSession() {
 
 async function mergeDuplicateStories() {
   try {
-    const resp = await fetch(API + "/api/dedupe-recent", { method: "POST" });
-    const data = await readJson(resp);
-    if (resp.ok && data.total_merged > 0) {
-      setStatus(data.message);
-    }
-  } catch (_) {}
-}
-
-async function backfillAndFetchNewSectors() {
-  try {
-    const backfillResp = await fetch(API + "/api/backfill-new-sectors", { method: "POST" });
-    const backfill = await readJson(backfillResp);
-    if (backfillResp.ok && backfill.message) {
-      setStatus(backfill.message);
-    }
-  } catch (_) {}
-  try {
-    setStatus("Fetching past Chocolate news ...");
-    const resp = await fetch(API + "/api/refresh-sector/chocolate", { method: "POST" });
-    const data = await readJson(resp);
-    if (resp.ok) {
-      markNewArticles(data.new_ids || []);
-      if (data.message) setStatus(data.message);
-    }
+    await fetch(API + "/api/dedupe-recent", { method: "POST" });
   } catch (_) {}
 }
 
@@ -1300,26 +1276,30 @@ async function maybeAutoRefresh() {
   try {
     const status = await (await fetch(API + "/api/auto-refresh/status")).json();
     if (!status.stale && status.article_count > 0) return;
-    setStatus("Fetching latest sector news — this may take a minute ...");
+    if (adminUnlocked) {
+      setStatus("Fetching latest sector news — this may take a minute ...");
+    }
     const resp = await fetch(API + "/api/auto-refresh", { method: "POST" });
     const data = await readJson(resp);
     if (!resp.ok) throw new Error(data.detail || "Auto refresh failed");
     if (data.ran) {
       await loadFeedSummary();
       await loadArticles();
-      const added = data.total_inserted || 0;
-      setStatus(
-        added > 0
-          ? `News updated automatically — ${added} new article(s) added.`
-          : "News feeds checked — dashboard is up to date."
-      );
-    } else if (data.reason === "already_running") {
+      if (adminUnlocked) {
+        const added = data.total_inserted || 0;
+        setStatus(
+          added > 0
+            ? `News updated automatically — ${added} new article(s) added.`
+            : "News feeds checked — dashboard is up to date."
+        );
+      }
+    } else if (adminUnlocked && data.reason === "already_running") {
       setStatus("News refresh already running — check back in a moment.");
-    } else {
+    } else if (adminUnlocked) {
       setStatus("");
     }
   } catch (e) {
-    setStatus(e.message || "Could not auto-refresh news.", true);
+    if (adminUnlocked) setStatus(e.message || "Could not auto-refresh news.", true);
   }
 }
 

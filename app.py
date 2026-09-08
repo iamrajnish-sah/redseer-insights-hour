@@ -1281,7 +1281,7 @@ def _refresh_one_sector(sector):
 
 
 @app.post("/api/backfill-new-sectors")
-def backfill_new_sectors():
+def backfill_new_sectors(_: None = Depends(admin_auth.require_admin)):
     """Tag already-stored news for Chocolate; retag Media to short-form/audio only."""
     if database.get_meta("new_sectors_backfill_v2") == "1":
         return {
@@ -1307,7 +1307,7 @@ def backfill_new_sectors():
 
 
 @app.post("/api/refresh-sector/{sector}")
-def refresh_one_sector(sector: str):
+def refresh_one_sector(sector: str, _: None = Depends(admin_auth.require_admin)):
     """Lightweight single-sector fetch for Chocolate (or any other sector)."""
     if sector == "chocolate":
         last = database.get_meta("chocolate_sector_fetch_at")
