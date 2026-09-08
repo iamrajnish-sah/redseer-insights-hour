@@ -274,6 +274,12 @@ def _merge_remote_into_local(local_path, remote_bytes):
                             SELECT 1 FROM main.articles m2
                             WHERE r.title_key IS NOT NULL AND r.title_key != ''
                               AND m2.title_key = r.title_key AND m2.pub_date IS r.pub_date
+                          )
+                          AND NOT EXISTS (
+                            SELECT 1 FROM main.suppressed_articles s
+                            WHERE (r.url IS NOT NULL AND r.url != '' AND s.url = r.url)
+                               OR (r.resolved_url IS NOT NULL AND r.resolved_url != '' AND (s.resolved_url = r.resolved_url OR s.url = r.resolved_url))
+                               OR (r.title_key IS NOT NULL AND r.title_key != '' AND s.title_key = r.title_key)
                           )"""
                 )
                 added_articles = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
@@ -300,6 +306,18 @@ def _merge_remote_into_local(local_path, remote_bytes):
                        FROM remote.subscriber_sectors rs
                        JOIN remote.subscribers r ON r.id = rs.subscriber_id
                        JOIN main.subscribers m ON m.email = r.email COLLATE NOCASE"""
+                )
+
+            if _table_columns(conn, "remote", "suppressed_articles") and _table_columns(conn, "main", "suppressed_articles"):
+                conn.execute(
+                    """INSERT INTO main.suppressed_articles (url, resolved_url, title_key, deleted_at)
+                       SELECT r.url, r.resolved_url, r.title_key, r.deleted_at
+                       FROM remote.suppressed_articles r
+                       WHERE NOT EXISTS (
+                         SELECT 1 FROM main.suppressed_articles m
+                         WHERE (r.url IS NOT NULL AND r.url != '' AND m.url = r.url)
+                            OR (r.title_key IS NOT NULL AND r.title_key != '' AND m.title_key = r.title_key)
+                       )"""
                 )
 
             if _table_columns(conn, "remote", "intelligence_reports") and _table_columns(conn, "main", "intelligence_reports"):

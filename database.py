@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS suppressed_articles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT,
+    resolved_url TEXT,
+    title_key TEXT,
+    deleted_at TEXT
+);
 """
 
 
@@ -88,12 +96,15 @@ def init_db():
             pass
         conn.executescript(
             """
-            CREATE TABLE IF NOT EXISTS link_cache (
-                source_url TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS suppressed_articles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT,
                 resolved_url TEXT,
-                image_url TEXT,
-                updated_at TEXT
+                title_key TEXT,
+                deleted_at TEXT
             );
+            CREATE INDEX IF NOT EXISTS idx_suppressed_url ON suppressed_articles(url);
+            CREATE INDEX IF NOT EXISTS idx_suppressed_title ON suppressed_articles(title_key);
             """
         )
         _backfill_title_keys(conn)
@@ -466,6 +477,9 @@ def insert_articles(articles):
             title_key = _normalize_title_key(a.title)
             pre_classified = getattr(a, "pre_classified", False)
 
+            if _is_suppressed(conn, url, resolved_url, title_key):
+                continue
+
             if url:
                 existing = conn.execute(
                     """SELECT id FROM articles
@@ -620,6 +634,57 @@ def mark_duplicate(article_id, duplicate_of_id):
         )
 
 
+def _is_suppressed(conn, url=None, resolved_url=None, title_key=None):
+    clauses = []
+    params = []
+    if url:
+        clauses.append("url = ?")
+        params.append(url)
+    if resolved_url:
+        clauses.append("resolved_url = ?")
+        params.append(resolved_url)
+        clauses.append("url = ?")
+        params.append(resolved_url)
+    if title_key:
+        clauses.append("title_key = ?")
+        params.append(title_key)
+    if not clauses:
+        return False
+    row = conn.execute(
+        f"SELECT 1 FROM suppressed_articles WHERE {' OR '.join(clauses)} LIMIT 1",
+        params,
+    ).fetchone()
+    return bool(row)
+
+
+def delete_article(article_id):
+    """Permanently remove a card and prevent the same story from being re-ingested."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM articles WHERE id = ?", (article_id,)).fetchone()
+        if not row:
+            return None
+        url = _normalize_url(row["url"])
+        resolved_url = None
+        try:
+            resolved_url = _normalize_url(row["resolved_url"])
+        except (IndexError, KeyError):
+            pass
+        title_key = row["title_key"] or _normalize_title_key(row["title"])
+        conn.execute(
+            """INSERT INTO suppressed_articles (url, resolved_url, title_key, deleted_at)
+               VALUES (?, ?, ?, ?)""",
+            (url, resolved_url, title_key, _now_iso()),
+        )
+        conn.execute(
+            "DELETE FROM articles WHERE id = ? OR duplicate_of = ?",
+            (article_id, article_id),
+        )
+        return {
+            "id": article_id,
+            "title": row["title"],
+        }
+
+
 def get_pub_dates():
     with get_conn() as conn:
         rows = conn.execute(
@@ -638,12 +703,18 @@ def get_stats():
     return {"total": total, "unprocessed": unprocessed, "relevant": relevant}
 
 
-def get_relevant_articles(pub_date=None, sector=None, search=None, days=None):
+def get_relevant_articles(pub_date=None, sector=None, search=None, days=None, start_date=None, end_date=None):
     query = "SELECT * FROM articles WHERE relevant=1 AND duplicate_of IS NULL"
     params = []
-    if pub_date:
+    if start_date and end_date:
+        query += " AND pub_date >= ? AND pub_date <= ?"
+        params.extend([start_date, end_date])
+    elif pub_date:
         query += " AND pub_date=?"
         params.append(pub_date)
+    elif start_date:
+        query += " AND pub_date >= ?"
+        params.append(start_date)
     elif days:
         query += " AND pub_date >= date('now', ?)"
         params.append(f"-{int(days)} days")

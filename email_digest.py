@@ -14,6 +14,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from html import escape as html_escape
 from pathlib import Path
+from datetime import date, datetime
 
 import database
 import subscribers
@@ -212,21 +213,50 @@ def _normalize_sectors(sectors):
     return cleaned
 
 
-def send_sector_digests(pub_date, sectors=None):
+def _parse_iso_date(value, field_name):
+    text = (value or "").strip()
+    if not text:
+        raise ValueError(f"{field_name} is required")
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date().isoformat()
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be YYYY-MM-DD") from exc
+
+
+def _period_label(start_date, end_date):
+    if start_date == end_date:
+        return start_date
+    return f"{start_date} to {end_date}"
+
+
+def _articles_for_sector(sector, start_date, end_date, limit=80):
+    rows = database.get_relevant_articles(
+        sector=sector, start_date=start_date, end_date=end_date
+    )
+    return list(rows)[:limit]
+
+
+def send_sector_digests(pub_date, sectors=None, start_date=None, end_date=None):
     if not smtp_configured():
         raise RuntimeError(
             "SMTP is not configured. Add SMTP_HOST, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM to .env"
         )
 
     selected_sectors = _normalize_sectors(sectors)
+    start_date = _parse_iso_date(start_date or pub_date or str(date.today()), "start_date")
+    end_date = _parse_iso_date(end_date or start_date, "end_date")
+    if start_date > end_date:
+        raise ValueError("start_date cannot be after end_date")
 
     if subscribers.has_subscribers():
-        return _send_subscriber_campaign(pub_date, selected_sectors)
+        return _send_subscriber_campaign(start_date, selected_sectors, end_date)
 
-    return _send_legacy_sector_digests(pub_date, selected_sectors)
+    return _send_legacy_sector_digests(start_date, selected_sectors, end_date)
 
 
-def _send_subscriber_campaign(pub_date, sectors):
+def _send_subscriber_campaign(start_date, sectors, end_date=None):
+    end_date = end_date or start_date
+    period = _period_label(start_date, end_date)
     active = subscribers.get_active_subscribers_for_sectors(sectors)
     if not active:
         raise RuntimeError("No active subscribers for the selected sector(s).")
@@ -246,7 +276,7 @@ def _send_subscriber_campaign(pub_date, sectors):
         sector_sections = []
         total_articles = 0
         for sector in sub_sectors:
-            rows = database.get_relevant_articles(pub_date=pub_date, sector=sector)
+            rows = _articles_for_sector(sector, start_date, end_date)
             if rows:
                 sector_sections.append((SECTOR_LABELS[sector], rows))
                 total_articles += len(rows)
@@ -257,19 +287,19 @@ def _send_subscriber_campaign(pub_date, sectors):
                 "name": sub["name"],
                 "sectors": sub_sectors,
                 "status": "skipped",
-                "reason": "no articles for this date",
+                "reason": "no articles for this date range",
             })
             continue
 
         footer = build_email_footer(sub["token"])
-        html = build_multi_sector_digest(sector_sections, pub_date, footer)
+        html = build_multi_sector_digest(sector_sections, period, footer)
         if len(sub_sectors) == 1:
-            subject = f"{PRODUCT_NAME} — {SECTOR_LABELS[sub_sectors[0]]} — {pub_date}"
+            subject = f"{PRODUCT_NAME} — {SECTOR_LABELS[sub_sectors[0]]} — {period}"
         else:
             labels = ", ".join(SECTOR_LABELS[s] for s in sub_sectors[:3])
             if len(sub_sectors) > 3:
                 labels += f" +{len(sub_sectors) - 3} more"
-            subject = f"{PRODUCT_NAME} — {labels} — {pub_date}"
+            subject = f"{PRODUCT_NAME} — {labels} — {period}"
 
         _send_email([email], subject, html)
         sent_emails.add(email)
@@ -283,11 +313,13 @@ def _send_subscriber_campaign(pub_date, sectors):
 
     sent = [item for item in results if item["status"] == "sent"]
     if not sent:
-        raise RuntimeError("No emails sent — no articles matched subscribers for this date.")
+        raise RuntimeError("No emails sent — no articles matched subscribers for these dates.")
 
     return {
         "mode": "subscribers",
-        "pub_date": pub_date,
+        "pub_date": period,
+        "start_date": start_date,
+        "end_date": end_date,
         "sectors": sectors,
         "sent_count": len(sent),
         "skipped_count": len(results) - len(sent),
@@ -295,7 +327,9 @@ def _send_subscriber_campaign(pub_date, sectors):
     }
 
 
-def _send_legacy_sector_digests(pub_date, sectors):
+def _send_legacy_sector_digests(start_date, sectors, end_date=None):
+    end_date = end_date or start_date
+    period = _period_label(start_date, end_date)
     recipients = load_recipients()
     if not any(recipients.get(sector) for sector in sectors):
         raise RuntimeError(
@@ -315,19 +349,19 @@ def _send_legacy_sector_digests(pub_date, sectors):
             })
             continue
 
-        rows = database.get_relevant_articles(pub_date=pub_date, sector=sector)
+        rows = _articles_for_sector(sector, start_date, end_date)
         if not rows:
             results.append({
                 "sector": sector,
                 "sector_label": label,
                 "status": "skipped",
-                "reason": "no articles for this date",
+                "reason": "no articles for this date range",
                 "recipients": emails,
             })
             continue
 
-        html = build_digest_html(label, pub_date, rows)
-        subject = f"{PRODUCT_NAME} — {label} — {pub_date}"
+        html = build_digest_html(label, period, rows)
+        subject = f"{PRODUCT_NAME} — {label} — {period}"
         _send_email(emails, subject, html)
         results.append({
             "sector": sector,
@@ -339,7 +373,9 @@ def _send_legacy_sector_digests(pub_date, sectors):
 
     return {
         "mode": "legacy",
-        "pub_date": pub_date,
+        "pub_date": period,
+        "start_date": start_date,
+        "end_date": end_date,
         "sectors": sectors,
         "sent_count": len([item for item in results if item["status"] == "sent"]),
         "skipped_count": len([item for item in results if item["status"] == "skipped"]),
