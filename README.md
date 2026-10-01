@@ -1,6 +1,18 @@
 # Redseer Insight Hour
 
-Daily sector intelligence dashboard for India — curated news by sector with email digests.
+Daily sector intelligence dashboard for India — curated news by sector with email digests, festive-sale automation, and optional website/Instagram scraping.
+
+## Recommended hosting (durable DB)
+
+**Vercel Hobby loses SQLite on cold start** unless Blob works. Prefer **Render** or **Railway** with a persistent disk:
+
+| Host | Disk setup | Notes |
+|---|---|---|
+| **Render** | Use `render.yaml` (disk at `/var/data`) | Set `PERSISTENT_DISK_PATH=/var/data` |
+| **Railway** | Attach a Volume at `/data` | `RAILWAY_VOLUME_MOUNT_PATH` is usually auto-set |
+| Vercel | Blob store connected | Works, but Hobby cannot run hourly crons |
+
+Sub-daily automation (hourly / 3h / 5h) uses **GitHub Actions** → your app’s `/api/cron/*` endpoints with `CRON_SECRET`.
 
 ## Local setup
 
@@ -19,49 +31,61 @@ Open **http://localhost:8000**
 Copy `.env.example` to `.env`. Important variables:
 
 | Variable | Purpose |
-|----------|---------|
-| `ADMIN_PASSWORD` | Protects Backend Management (required on public hosting) |
-| `CRON_SECRET` | Protects `/api/cron/refresh` (recommended on Vercel) |
-| `GEMINIAPIKEY` | Gemini classification + PDF/image newspaper reading |
-| `INTELLIGENCE_GEMINI_API_KEY` | Intelligence Hub weekly briefs (second Gemini key; separate quota) |
-| `NEWSAPIKEY` | NewsAPI ingestion (optional) |
-| `SMTP_*` / `EMAIL_FROM` | Send sector email digests |
-| `GEMINI_ORIGINS` | `epub,newspaper` (default) |
-| `SECTOR_RECIPIENTS_JSON` | Email lists on Vercel (instead of local JSON file) |
+|---|---|
+| `ADMIN_PASSWORD` | Protects Backend Management |
+| `CRON_SECRET` | Protects `/api/cron/*` (required on hosted) |
+| `GEMINIAPIKEY` | News classification (festive hourly summaries) |
+| `INTELLIGENCE_GEMINI_API_KEY` | Intelligence Hub briefs (second Gemini key) |
+| `NEWSAPIKEY` / `GNEWSAPIKEY` | Metered news APIs |
+| `APIFY_TOKEN` | Instagram scraping via Apify |
+| `SMTP_*` / `EMAIL_FROM` | Email digests |
+| `PERSISTENT_DISK_PATH` | e.g. `/var/data` on Render |
+| `APP_BASE_URL` | Public URL for email links + GitHub Actions |
 
-**Never commit `.env`, `news.db`, or `sector_recipients.json`** — they are in `.gitignore`.
+## Automation schedule
 
-## Deploy on Vercel
+| Job | Cadence | Endpoint | What it does |
+|---|---|---|---|
+| Free feeds | Hourly | `/api/cron/refresh-hourly` | RSS + festive GNews + **festive-only** Gemini summaries |
+| Metered APIs | Every 3h | `/api/cron/refresh-metered` | Full NewsAPI + GNews |
+| Festive intel | Every 5h | `/api/cron/festive-intelligence` | Scrape targets → festive brief → email |
+| Weekly intel | Mondays | `/api/cron/weekly-intelligence` | Weekly subscriber briefs |
+
+Wire GitHub → Settings → Secrets: `APP_BASE_URL`, `CRON_SECRET`. Workflow: `.github/workflows/automation-cron.yml`.
+
+## Scraping (Backend Management)
+
+Two boxes appear after you unlock Backend Management:
+
+1. **Website scraping** — paste a sale/brand page URL; matching festive/sale links are ingested into Festive Sale.
+2. **Instagram scraping** — paste `@handle` or profile URL; requires free `APIFY_TOKEN`.
+
+Targets are stored in SQLite and re-run on the festive intelligence cron.
+
+## Intelligence exports
+
+Reports can be downloaded as **JSON**, **Markdown**, **HTML** (Print → PDF), and **Word (.docx)**.
+
+## Deploy on Render
 
 1. Push this repo to GitHub.
-2. Go to [vercel.com](https://vercel.com) → **Add New Project** → import `redseer-insights-hour`.
-3. **Environment Variables** — add at minimum:
-   - `ADMIN_PASSWORD` — your secret backend password
-   - `GEMINIAPIKEY` — news processing / newspaper reading
-   - `INTELLIGENCE_GEMINI_API_KEY` — Intelligence Hub generate (a **second** Google AI Studio key)
-   - `NEWSAPIKEY` (optional)
-   - SMTP vars if using email
-   - `SECTOR_RECIPIENTS_JSON` — copy content from `sector_recipients.example.json` as one line
-4. Deploy.
+2. Render → New → Blueprint → select repo (`render.yaml`).
+3. Set env vars (at least `ADMIN_PASSWORD`, `CRON_SECRET`, Gemini keys, SMTP).
+4. Set GitHub secrets `APP_BASE_URL` + `CRON_SECRET` so Actions can hit cron routes.
 
-### Vercel notes — keep your data (important)
+## Deploy on Railway
 
-1. **Storage → Blob** → create a store (e.g. `redseer-insights-hour-blob`) and **connect it to this project**.
-2. Vercel adds **`BLOB_READ_WRITE_TOKEN`** automatically — redeploy after linking.
-3. The app saves the full SQLite database to Blob after every upload, refresh, and Gemini process.
-4. **Mint/newspaper uploads** and **Gemini-processed articles** are stored permanently — you will not need to re-upload or re-run Gemini after a cold start.
-5. In Backend Management, open `/api/admin/storage-status` (or check Blob dashboard) — after the first save you should see blob size **> 0 B**.
-
-Without Blob, `/tmp` on Vercel is wiped overnight and all news disappears.
-
-- Backend Management asks for `ADMIN_PASSWORD` when opening the panel.
-- Public visitors only see the news dashboard; admin API routes reject requests without the password header.
+1. New project from repo.
+2. Add a Volume mounted at `/data`.
+3. Start command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
+4. Set the same env vars + GitHub Actions secrets.
 
 ## Features
 
-- Sector tabs (e-commerce, ride hailing, quick commerce, etc.)
-- RSS + NewsAPI ingestion with keyword filtering
-- Newspaper upload: EPUB, PDF, images, TXT (Google Gemini)
-- Intelligence Hub: public weekly briefs; generate uses a separate Gemini key (`INTELLIGENCE_GEMINI_API_KEY`)
-- Sector-specific email digests
-- Duplicate story removal (URL + headline)
+- Sector tabs (e-commerce, ride hailing, festive sale, etc.)
+- RSS + NewsAPI + GNews ingestion
+- Festive Sale specialist matcher + hourly festive summaries only
+- Website + Instagram scrape targets
+- Newspaper upload (EPUB/PDF/images via Gemini)
+- Intelligence Hub with HTML/Word/PDF-ready export
+- Sector email digests + automated festive briefs

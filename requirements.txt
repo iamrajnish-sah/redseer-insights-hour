@@ -8,4 +8,5 @@ fastapi
 uvicorn
 python-multipart
 pypdf
+python-docx
 vercel>=0.0.8

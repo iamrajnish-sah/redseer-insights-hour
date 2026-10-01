@@ -37,6 +37,10 @@ import subscribers
 import intelligence_hub
 import admin_auth
 import auto_refresh
+import scrape_ingest
+import festive_jobs
+import report_export
+from db_path import using_persistent_disk
 from db_persist import restore_db, save_db, storage_status, enabled
 
 from sector_keywords import (
@@ -85,15 +89,24 @@ def _cron_allowed(authorization, user_agent, cron_schedule, admin_password):
         return True
     if cron_schedule and os.environ.get("VERCEL"):
         return True
-    return not os.environ.get("VERCEL")
+    hosted = any(
+        os.environ.get(k)
+        for k in ("VERCEL", "RENDER", "RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID")
+    )
+    if hosted:
+        return False
+    return True
 
 
 @app.on_event("startup")
 def on_startup():
-    restore_db(database.DB_PATH)
+    # Persistent disk (Render/Railway) keeps SQLite across restarts — skip Blob restore.
+    if not using_persistent_disk():
+        restore_db(database.DB_PATH)
     database.init_db()
-    # If server restarted with an empty /tmp DB but cloud backup exists, restore it.
-    restore_db(database.DB_PATH)
+    scrape_ingest.init_scrape_tables()
+    if not using_persistent_disk():
+        restore_db(database.DB_PATH)
 
 
 def _row_to_dict(row):
@@ -670,27 +683,60 @@ def admin_export_intelligence_markdown(report_id: int, _: None = Depends(admin_a
 
 
 @app.get("/api/admin/intelligence/reports/{report_id}/export.pdf")
-def admin_export_intelligence_pdf(report_id: int, _: None = Depends(admin_auth.require_admin)):
-    """Print-ready HTML export (open and use browser Print → Save as PDF)."""
+@app.get("/api/admin/intelligence/reports/{report_id}/export.html")
+def admin_export_intelligence_html(report_id: int, _: None = Depends(admin_auth.require_admin)):
+    """Print-ready HTML export (browser Print → Save as PDF)."""
     report = intelligence_hub.get_report(report_id)
     if not report:
         raise HTTPException(404, "Report not found")
     enriched = intelligence_hub.enrich_report_with_sources(report)
-    label = enriched.get("sector_label") or enriched["sector"]
-    body = (enriched.get("report_markdown") or "").replace("&", "&amp;").replace("<", "&lt;")
-    html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Intelligence — {label}</title>
-<style>
-body {{ font-family: Georgia, serif; max-width: 800px; margin: 40px auto; color: #0f172a; line-height: 1.55; }}
-h1,h2 {{ font-family: Arial, sans-serif; color: #1e3a5f; }}
-pre {{ white-space: pre-wrap; font-family: Georgia, serif; }}
-@media print {{ button {{ display:none; }} }}
-</style></head><body>
-<button onclick="window.print()">Print / Save as PDF</button>
-<pre>{body}</pre>
-<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),400));</script>
-</body></html>"""
+    html = report_export.report_to_html(enriched)
     return HTMLResponse(html)
+
+
+@app.get("/api/admin/intelligence/reports/{report_id}/export.docx")
+def admin_export_intelligence_docx(report_id: int, _: None = Depends(admin_auth.require_admin)):
+    report = intelligence_hub.get_report(report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    enriched = intelligence_hub.enrich_report_with_sources(report)
+    try:
+        data = report_export.report_to_docx_bytes(enriched)
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    filename = f"intelligence-{enriched['sector']}-{enriched['start_date']}-{enriched['end_date']}.docx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/intelligence/reports/{report_id}/export.html")
+def public_export_intelligence_html(report_id: int):
+    report = intelligence_hub.get_report(report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    enriched = intelligence_hub.enrich_report_with_sources(report)
+    return HTMLResponse(report_export.report_to_html(enriched))
+
+
+@app.get("/api/intelligence/reports/{report_id}/export.docx")
+def public_export_intelligence_docx(report_id: int):
+    report = intelligence_hub.get_report(report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    enriched = intelligence_hub.enrich_report_with_sources(report)
+    try:
+        data = report_export.report_to_docx_bytes(enriched)
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    filename = f"intelligence-{enriched['sector']}-{enriched['start_date']}-{enriched['end_date']}.docx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/articles")
@@ -820,7 +866,7 @@ def cron_refresh_hourly(
     x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
     x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
 ):
-    """Hourly cron: RSS + Festive Sale GNews, then summarize new articles."""
+    """Hourly: free RSS + Festive GNews, then Gemini summarize FESTIVE only."""
     if not _cron_allowed(
         authorization, user_agent, x_vercel_cron_schedule, x_admin_password
     ):
@@ -836,47 +882,104 @@ def cron_refresh_hourly(
                 festive = _refresh_one_sector("festive_sale")
             except Exception as exc:
                 festive = {"error": str(exc), "inserted": 0, "refreshed": 0}
-        classified = 0
-        if os.environ.get("GEMINIAPIKEY") or os.environ.get("GEMINI_API_KEY"):
-            try:
-                process_rows, settings, _, _ = classify_and_summarize.get_rows_for_processing()
-                if process_rows:
-                    batch_opts = classify_and_summarize.batch_settings()
-                    results, _stats = classify_and_summarize.classify_batch(
-                        process_rows[: int(os.environ.get("HOURLY_GEMINI_LIMIT", "12"))],
-                        batch_size=batch_opts["batch_size"],
-                        pause_between_calls=batch_opts["pause_between_calls"],
-                        body_chars=settings["body_chars"],
-                    )
-                    for row in process_rows:
-                        r = results.get(row["id"])
-                        if not r:
-                            continue
-                        database.update_classification(
-                            row["id"],
-                            r["is_relevant"],
-                            normalize_sector_tags(r["sectors"]),
-                            r["summary"],
-                        )
-                        classified += 1
-                    if classified:
-                        database.persist()
-            except Exception as exc:
-                summary = {**(summary or {}), "gemini_error": str(exc)}
+        gemini = festive_jobs.summarize_festive_only()
+        classified = gemini.get("classified", 0)
+        if gemini.get("error") or gemini.get("reason") == "no_gemini_key":
+            summary = {**(summary or {}), "gemini": gemini}
         return {
             "ok": True,
             "rss": summary,
             "festive_sale": festive,
             "retagged": retagged,
             "classified": classified,
+            "festive_summary_only": True,
+            "gemini": gemini,
             "message": (
                 f"Hourly refresh done — festive "
                 f"{festive.get('inserted', 0)} new / {festive.get('refreshed', 0)} updated, "
-                f"{retagged.get('added', 0)} retagged, {classified} summarized."
+                f"{retagged.get('added', 0)} retagged, {classified} festive summarized "
+                f"(other sectors not summarized hourly)."
             ),
         }
     except Exception as exc:
         raise HTTPException(500, f"Hourly cron failed: {exc}") from exc
+
+
+@app.get("/api/cron/refresh-metered")
+def cron_refresh_metered(
+    authorization: str = Header(default=None, alias="Authorization"),
+    user_agent: str = Header(default=None, alias="User-Agent"),
+    x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
+    x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
+):
+    """Every ~3 hours: NewsAPI + full GNews (metered sources)."""
+    if not _cron_allowed(
+        authorization, user_agent, x_vercel_cron_schedule, x_admin_password
+    ):
+        raise HTTPException(401, "Unauthorized")
+    try:
+        summary = auto_refresh.run_refresh(
+            include_rss=False,
+            include_gnews=True,
+            include_newsapi=True,
+        )
+        return {
+            "ok": True,
+            **summary,
+            "message": (
+                f"Metered refresh done — inserted {summary.get('total_inserted', 0)}, "
+                f"updated {summary.get('total_refreshed', 0)}."
+            ),
+        }
+    except Exception as exc:
+        raise HTTPException(500, f"Metered cron failed: {exc}") from exc
+
+
+@app.get("/api/cron/festive-intelligence")
+def cron_festive_intelligence(
+    authorization: str = Header(default=None, alias="Authorization"),
+    user_agent: str = Header(default=None, alias="User-Agent"),
+    x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
+    x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
+):
+    """Every ~5 hours: generate Festive Sale intelligence brief and email it."""
+    if not _cron_allowed(
+        authorization, user_agent, x_vercel_cron_schedule, x_admin_password
+    ):
+        raise HTTPException(401, "Unauthorized")
+    try:
+        # Pull scrape targets first so new site/IG posts enter the brief
+        scrape = scrape_ingest.run_all_enabled()
+        retagged = database.reconcile_festive_sale_tags()
+        festive_jobs.summarize_festive_only()
+        result = festive_jobs.run_festive_intelligence_and_email(force=True)
+        return {
+            "ok": True,
+            "scrape": scrape,
+            "retagged": retagged,
+            **result,
+            "message": "Festive intelligence cycle finished.",
+        }
+    except Exception as exc:
+        raise HTTPException(500, f"Festive intelligence cron failed: {exc}") from exc
+
+
+@app.get("/api/cron/scrape-targets")
+def cron_scrape_targets(
+    authorization: str = Header(default=None, alias="Authorization"),
+    user_agent: str = Header(default=None, alias="User-Agent"),
+    x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
+    x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
+):
+    """Run all enabled website + Instagram scrape targets."""
+    if not _cron_allowed(
+        authorization, user_agent, x_vercel_cron_schedule, x_admin_password
+    ):
+        raise HTTPException(401, "Unauthorized")
+    try:
+        return {"ok": True, **scrape_ingest.run_all_enabled()}
+    except Exception as exc:
+        raise HTTPException(500, f"Scrape cron failed: {exc}") from exc
 
 
 @app.get("/api/cron/weekly-intelligence")
@@ -903,11 +1006,18 @@ def cron_weekly_intelligence(
 
 @app.get("/api/admin/storage-status")
 def admin_storage_status(_: None = Depends(admin_auth.require_admin)):
-    """Check whether Vercel Blob persistence is configured and working."""
+    """Check whether durable storage (disk or Blob) is configured and working."""
     status = storage_status(database.DB_PATH)
     status["relevant_articles"] = database.get_relevant_count()
     status["total_articles"] = database.get_stats()["total"]
-    if status["blob_configured"] and status["last_save_ok"]:
+    status["database_path"] = database.DB_PATH
+    status["persistent_disk"] = using_persistent_disk()
+    if using_persistent_disk():
+        status["hint"] = (
+            f"Persistent disk active — SQLite at {database.DB_PATH} survives restarts "
+            "(Render/Railway). Blob backup is optional."
+        )
+    elif status["blob_configured"] and status["last_save_ok"]:
         status["hint"] = "Blob save succeeded — your news is stored in the cloud."
     elif status["blob_configured"] and status["last_save_error"]:
         status["hint"] = f"Blob linked but last save failed: {status['last_save_error']}"
@@ -915,10 +1025,69 @@ def admin_storage_status(_: None = Depends(admin_auth.require_admin)):
         status["hint"] = "Blob linked — refresh RSS or process Gemini once to save data."
     else:
         status["hint"] = (
-            "Missing Blob on this Vercel project — add BLOB_STORE_ID + BLOB_READ_WRITE_TOKEN "
-            "(Storage → your Blob store → Connect to Project), then redeploy."
+            "No durable storage. Prefer Render/Railway with a disk (PERSISTENT_DISK_PATH=/var/data), "
+            "or link Vercel Blob. Otherwise /tmp data is wiped on cold start."
         )
     return status
+
+
+@app.get("/api/admin/scrape/status")
+def admin_scrape_status(_: None = Depends(admin_auth.require_admin)):
+    return scrape_ingest.status_summary()
+
+
+@app.get("/api/admin/scrape/targets")
+def admin_list_scrape_targets(
+    kind: str = None, _: None = Depends(admin_auth.require_admin)
+):
+    return scrape_ingest.list_targets(kind=kind)
+
+
+@app.post("/api/admin/scrape/targets")
+async def admin_add_scrape_target(
+    request: Request, _: None = Depends(admin_auth.require_admin)
+):
+    body = await request.json()
+    try:
+        target = scrape_ingest.add_target(
+            kind=body.get("kind"),
+            url=body.get("url") or body.get("handle") or "",
+            label=body.get("label"),
+            sector=body.get("sector") or "festive_sale",
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "target": target}
+
+
+@app.delete("/api/admin/scrape/targets/{target_id}")
+def admin_delete_scrape_target(target_id: int, _: None = Depends(admin_auth.require_admin)):
+    if not scrape_ingest.delete_target(target_id):
+        raise HTTPException(404, "Target not found")
+    return {"ok": True}
+
+
+@app.post("/api/admin/scrape/targets/{target_id}/run")
+def admin_run_scrape_target(target_id: int, _: None = Depends(admin_auth.require_admin)):
+    try:
+        return scrape_ingest.run_target(target_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@app.post("/api/admin/scrape/run")
+async def admin_run_scrape_all(
+    request: Request, _: None = Depends(admin_auth.require_admin)
+):
+    kind = None
+    try:
+        body = await request.json()
+        kind = (body or {}).get("kind")
+    except Exception:
+        kind = None
+    return scrape_ingest.run_all_enabled(kind=kind)
 
 
 @app.post("/api/admin/restore-db")

@@ -1,0 +1,99 @@
+# Sub-daily automation (Vercel Hobby cannot run hourly crons).
+# Required repo secrets:
+#   APP_BASE_URL  — e.g. https://your-app.onrender.com  (no trailing slash)
+#   CRON_SECRET   — same value as CRON_SECRET on the deployed app
+
+name: Automation cron
+
+on:
+  schedule:
+    - cron: "5 * * * *"
+    - cron: "20 */3 * * *"
+    - cron: "35 */5 * * *"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Which cron to run"
+        required: true
+        default: "hourly"
+        type: choice
+        options:
+          - hourly
+          - metered
+          - festive
+          - scrape
+
+jobs:
+  hourly:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '5 * * * *') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'hourly')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hourly free feeds + festive summarize
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "${APP_BASE_URL:-}" && test -n "${CRON_SECRET:-}" || { echo "Secrets missing"; exit 0; }
+          curl -fsS -X GET \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "User-Agent: github-actions-cron" \
+            --max-time 280 \
+            "${APP_BASE_URL%/}/api/cron/refresh-hourly"
+
+  metered:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '20 */3 * * *') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'metered')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Metered NewsAPI + GNews (~3h)
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "${APP_BASE_URL:-}" && test -n "${CRON_SECRET:-}" || { echo "Secrets missing"; exit 0; }
+          curl -fsS -X GET \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "User-Agent: github-actions-cron" \
+            --max-time 280 \
+            "${APP_BASE_URL%/}/api/cron/refresh-metered"
+
+  festive:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '35 */5 * * *') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'festive')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Festive intelligence + email (~5h)
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "${APP_BASE_URL:-}" && test -n "${CRON_SECRET:-}" || { echo "Secrets missing"; exit 0; }
+          curl -fsS -X GET \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "User-Agent: github-actions-cron" \
+            --max-time 280 \
+            "${APP_BASE_URL%/}/api/cron/festive-intelligence"
+
+  scrape:
+    if: github.event_name == 'workflow_dispatch' && inputs.job == 'scrape'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scrape targets only
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "${APP_BASE_URL:-}" && test -n "${CRON_SECRET:-}" || { echo "Secrets missing"; exit 0; }
+          curl -fsS -X GET \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "User-Agent: github-actions-cron" \
+            --max-time 280 \
+            "${APP_BASE_URL%/}/api/cron/scrape-targets"

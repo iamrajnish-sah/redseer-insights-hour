@@ -13,10 +13,9 @@ import re
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
-DB_PATH = os.environ.get(
-    "DATABASE_PATH",
-    "/tmp/news.db" if os.environ.get("VERCEL") else "news.db",
-)
+from db_path import resolve_database_path
+
+DB_PATH = resolve_database_path()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS articles (
@@ -78,6 +77,12 @@ def get_conn():
 def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        try:
+            import scrape_ingest
+
+            scrape_ingest.init_scrape_tables(conn)
+        except Exception as exc:
+            print(f"  [warning] scrape_targets init skipped: {exc}")
         try:
             conn.execute("ALTER TABLE articles ADD COLUMN fetched_at TEXT")
         except sqlite3.OperationalError:

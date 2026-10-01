@@ -9,10 +9,6 @@
   },
   "crons": [
     {
-      "path": "/api/cron/refresh-hourly",
-      "schedule": "0 * * * *"
-    },
-    {
       "path": "/api/cron/refresh",
       "schedule": "0 8 * * *"
     },
@@ -22,7 +18,11 @@
     },
     {
       "path": "/api/cron/weekly-intelligence",
-      "schedule": "0 8 * * 1"
+      "schedule": "0 9 * * 1"
+    },
+    {
+      "path": "/api/cron/festive-intelligence",
+      "schedule": "0 11 * * *"
     }
   ]
 }

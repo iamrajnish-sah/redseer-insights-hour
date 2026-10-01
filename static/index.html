@@ -776,6 +776,69 @@
     display: none;
     margin-top: 12px;
   }
+  .scrape-boxes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-top: 14px;
+  }
+  @media (max-width: 820px) {
+    .scrape-boxes { grid-template-columns: 1fr; }
+  }
+  .scrape-box {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: #fff;
+    padding: 14px 16px;
+  }
+  .scrape-box h3 {
+    margin: 0 0 6px;
+    font-size: 0.95rem;
+    color: var(--primary);
+  }
+  .scrape-box p {
+    margin: 0 0 10px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.45;
+  }
+  .scrape-box .scrape-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .scrape-box .scrape-form input {
+    flex: 1 1 140px;
+    min-width: 120px;
+  }
+  .scrape-target-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 180px;
+    overflow: auto;
+  }
+  .scrape-target-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
+    font-size: 0.78rem;
+  }
+  .scrape-target-list li span {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .scrape-meta {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-top: 8px;
+  }
   .panel-backend-collapsible.open {
     display: block;
   }
@@ -980,6 +1043,31 @@
     </div>
     <div class="panel-row">
       <span class="field-label" id="emailHint"></span>
+    </div>
+    <div class="scrape-boxes" id="scrapeBoxes">
+      <div class="scrape-box" id="websiteScrapeBox">
+        <h3>Website scraping</h3>
+        <p>Track a brand/sale page URL. Matching festive/sale links are pulled into the Festive Sale tab and summarized hourly.</p>
+        <div class="scrape-form">
+          <input class="form-input" id="websiteScrapeUrl" type="url" placeholder="https://brand.com/sale">
+          <input class="form-input" id="websiteScrapeLabel" type="text" placeholder="Label (optional)">
+          <button class="btn btn-primary btn-sm" type="button" onclick="addWebsiteScrapeTarget()">Add site</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="runScrapeKind('website')">Run all sites</button>
+        </div>
+        <ul class="scrape-target-list" id="websiteTargetList"></ul>
+      </div>
+      <div class="scrape-box" id="instagramScrapeBox">
+        <h3>Instagram scraping</h3>
+        <p>Public profile handle or URL. Needs free <code>APIFY_TOKEN</code>. Posts land in Festive Sale and are included in automated briefs.</p>
+        <div class="scrape-form">
+          <input class="form-input" id="instagramScrapeHandle" type="text" placeholder="@amazonindia or profile URL">
+          <input class="form-input" id="instagramScrapeLabel" type="text" placeholder="Label (optional)">
+          <button class="btn btn-primary btn-sm" type="button" onclick="addInstagramScrapeTarget()">Add profile</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="runScrapeKind('instagram')">Run all IG</button>
+        </div>
+        <ul class="scrape-target-list" id="instagramTargetList"></ul>
+        <div class="scrape-meta" id="apifyHint">Apify status: checking…</div>
+      </div>
     </div>
   </section>
 
@@ -1549,6 +1637,7 @@ async function toggleBackendPanel() {
     await loadStats();
     await loadEmailStatus();
     await loadStorageStatus();
+    await loadScrapeTargets();
   }
 }
 
@@ -1556,17 +1645,130 @@ async function loadStorageStatus() {
   try {
     const data = await (await adminFetch(API + "/api/admin/storage-status")).json();
     const hint = document.getElementById("emailHint");
-    if (data.blob_configured && data.last_save_ok) {
+    if (data.persistent_disk) {
+      hint.textContent = `💾 Persistent disk OK · ${data.relevant_articles || 0} articles · ${data.database_path || ""}`;
+      hint.style.color = "#059669";
+    } else if (data.blob_configured && data.last_save_ok) {
       hint.textContent = `☁ Cloud save OK (${Math.round((data.local_db_bytes || 0) / 1024)} KB, ${data.relevant_articles || 0} articles)`;
       hint.style.color = "#059669";
     } else if (data.blob_configured) {
       hint.textContent = data.hint || "Blob linked — use Restore from Cloud or Save to Cloud.";
       hint.style.color = "#b45309";
     } else {
-      hint.textContent = data.hint || "⚠ Blob not configured — add BLOB_STORE_ID + BLOB_READ_WRITE_TOKEN on Vercel.";
+      hint.textContent = data.hint || "⚠ No durable DB — deploy on Render/Railway with a disk.";
       hint.style.color = "#dc2626";
     }
   } catch (_) {}
+}
+
+function renderScrapeTargets(targets) {
+  const websiteList = document.getElementById("websiteTargetList");
+  const igList = document.getElementById("instagramTargetList");
+  if (!websiteList || !igList) return;
+  const websites = (targets || []).filter((t) => t.kind === "website");
+  const igs = (targets || []).filter((t) => t.kind === "instagram");
+  const row = (t) => `<li>
+      <span title="${escapeAttr(t.url || "")}">${escapeHtml(t.label || t.handle || t.url || "#" + t.id)}</span>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="runScrapeTarget(${t.id})">Run</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="deleteScrapeTarget(${t.id})">✕</button>
+    </li>`;
+  websiteList.innerHTML = websites.length ? websites.map(row).join("") : "<li><span>No websites yet</span></li>";
+  igList.innerHTML = igs.length ? igs.map(row).join("") : "<li><span>No Instagram profiles yet</span></li>";
+}
+
+async function loadScrapeTargets() {
+  const hint = document.getElementById("apifyHint");
+  try {
+    const data = await (await adminFetch(API + "/api/admin/scrape/status")).json();
+    renderScrapeTargets(data.targets || []);
+    if (hint) {
+      hint.textContent = data.apify_configured
+        ? `Apify ready · actor ${data.apify_instagram_actor || "default"} · ${data.enabled_count || 0} enabled target(s)`
+        : "Apify not configured — add APIFY_TOKEN for Instagram. Website scrape still works.";
+      hint.style.color = data.apify_configured ? "#059669" : "#b45309";
+    }
+  } catch (e) {
+    if (hint) hint.textContent = "Could not load scrape targets.";
+  }
+}
+
+async function addWebsiteScrapeTarget() {
+  const url = (document.getElementById("websiteScrapeUrl").value || "").trim();
+  const label = (document.getElementById("websiteScrapeLabel").value || "").trim();
+  if (!url) { setStatus("Enter a website URL.", true); return; }
+  try {
+    const resp = await adminFetch(API + "/api/admin/scrape/targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "website", url, label, sector: "festive_sale" }),
+    });
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || "Could not add website");
+    document.getElementById("websiteScrapeUrl").value = "";
+    document.getElementById("websiteScrapeLabel").value = "";
+    setStatus(`Added website target: ${data.target.label}`);
+    await loadScrapeTargets();
+  } catch (e) { setStatus(e.message, true); }
+}
+
+async function addInstagramScrapeTarget() {
+  const handle = (document.getElementById("instagramScrapeHandle").value || "").trim();
+  const label = (document.getElementById("instagramScrapeLabel").value || "").trim();
+  if (!handle) { setStatus("Enter an Instagram handle or profile URL.", true); return; }
+  try {
+    const resp = await adminFetch(API + "/api/admin/scrape/targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "instagram", url: handle, label, sector: "festive_sale" }),
+    });
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || "Could not add Instagram target");
+    document.getElementById("instagramScrapeHandle").value = "";
+    document.getElementById("instagramScrapeLabel").value = "";
+    setStatus(`Added Instagram target: ${data.target.label}`);
+    await loadScrapeTargets();
+  } catch (e) { setStatus(e.message, true); }
+}
+
+async function deleteScrapeTarget(id) {
+  if (!confirm("Remove this scrape target?")) return;
+  try {
+    const resp = await adminFetch(API + `/api/admin/scrape/targets/${id}`, { method: "DELETE" });
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || "Delete failed");
+    setStatus("Scrape target removed.");
+    await loadScrapeTargets();
+  } catch (e) { setStatus(e.message, true); }
+}
+
+async function runScrapeTarget(id) {
+  setStatus("Running scrape target…");
+  try {
+    const resp = await adminFetch(API + `/api/admin/scrape/targets/${id}/run`, { method: "POST" });
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || data.error || "Scrape failed");
+    setStatus(`Scrape done — ${data.inserted || 0} new, ${data.refreshed || 0} updated.`);
+    await loadScrapeTargets();
+    await loadFestiveSaleNews();
+    await loadArticles();
+  } catch (e) { setStatus(e.message, true); }
+}
+
+async function runScrapeKind(kind) {
+  setStatus(`Running all ${kind} scrapes…`);
+  try {
+    const resp = await adminFetch(API + "/api/admin/scrape/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind }),
+    });
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || "Scrape failed");
+    setStatus(`Scrape finished — ${data.ok_count || 0}/${data.ran || 0} ok.`);
+    await loadScrapeTargets();
+    await loadFestiveSaleNews();
+    await loadArticles();
+  } catch (e) { setStatus(e.message, true); }
 }
 
 async function restoreFromCloud() {

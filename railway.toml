@@ -1,0 +1,9 @@
+# Railway: add a Volume, mount it at /data, set RAILWAY_VOLUME_MOUNT_PATH=/data
+# (Railway often sets this automatically when a volume is attached).
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "uvicorn app:app --host 0.0.0.0 --port $PORT"
+restartPolicyType = "ON_FAILURE"

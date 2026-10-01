@@ -52,11 +52,11 @@ def rss_refresh_hours():
 
 
 def gnews_refresh_hours():
-    return _hours("GNEWS_REFRESH_HOURS", 4)
+    return _hours("GNEWS_REFRESH_HOURS", 3)
 
 
 def newsapi_refresh_hours():
-    return _hours("NEWSAPI_REFRESH_HOURS", 6)
+    return _hours("NEWSAPI_REFRESH_HOURS", 3)
 
 
 def _lock_minutes():
@@ -114,12 +114,12 @@ def refresh_status():
         "gnews": {
             **_source_status(META_LAST_GNEWS, gnews_refresh_hours(), configured=has_gnews),
             "free": False,
-            "note": "GNews.io — festive sale queried hourly; full sector sweep daily.",
+            "note": "GNews.io — festive queried hourly; full sweep every ~3 hours via metered cron.",
         },
         "newsapi": {
             **_source_status(META_LAST_NEWSAPI, newsapi_refresh_hours(), configured=has_newsapi),
             "free": False,
-            "note": "NewsAPI metered — every 6 hours when a key is set.",
+            "note": "NewsAPI metered — every ~3 hours when a key is set.",
         },
     }
     last = get_last_refresh()
@@ -130,8 +130,14 @@ def refresh_status():
         "refresh_hours": rss_refresh_hours(),
         "sources": sources,
         "cron_hourly": "0 * * * *",
+        "cron_metered": "0 */3 * * *",
+        "cron_festive_intel": "0 */5 * * *",
         "cron_full": "0 8 * * *",
         "cron_rss": "0 14 * * *",
+        "note": (
+            "On Vercel Hobby, use GitHub Actions or cron-job.org for sub-daily schedules. "
+            "Prefer Render/Railway with a persistent disk for durable SQLite."
+        ),
     }
 
 

@@ -437,6 +437,8 @@ function renderReport(report) {
     ${regen}
     <a class="btn btn-ghost btn-sm" href="${API}/api/intelligence/reports/${report.id}/export.json">Export JSON</a>
     <a class="btn btn-ghost btn-sm" href="${API}/api/intelligence/reports/${report.id}/export.md">Export Markdown</a>
+    <a class="btn btn-ghost btn-sm" href="${API}/api/intelligence/reports/${report.id}/export.html" target="_blank">Export HTML / PDF</a>
+    <a class="btn btn-ghost btn-sm" href="${API}/api/intelligence/reports/${report.id}/export.docx">Export Word</a>
     ${del}
   `;
 

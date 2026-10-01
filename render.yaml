@@ -1,0 +1,45 @@
+# Render Blueprint — persistent SQLite on a disk (recommended over Vercel Hobby).
+# Dashboard: New → Blueprint → connect this repo.
+# After deploy, set env vars (ADMIN_PASSWORD, GEMINIAPIKEY, CRON_SECRET, SMTP_*, etc.)
+# and add GitHub Actions secrets APP_BASE_URL + CRON_SECRET for hourly automation.
+
+services:
+  - type: web
+    name: redseer-insights-hour
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: news-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PERSISTENT_DISK_PATH
+        value: /var/data
+      - key: PYTHONPATH
+        value: .
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: GEMINIAPIKEY
+        sync: false
+      - key: INTELLIGENCE_GEMINI_API_KEY
+        sync: false
+      - key: NEWSAPIKEY
+        sync: false
+      - key: GNEWSAPIKEY
+        sync: false
+      - key: APIFY_TOKEN
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
