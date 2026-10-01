@@ -9,6 +9,10 @@
   },
   "crons": [
     {
+      "path": "/api/cron/refresh-hourly",
+      "schedule": "0 * * * *"
+    },
+    {
       "path": "/api/cron/refresh",
       "schedule": "0 8 * * *"
     },

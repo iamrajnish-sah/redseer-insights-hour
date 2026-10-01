@@ -787,6 +787,36 @@ def reconcile_ride_hailing_tags():
     return {"added": added, "removed": removed}
 
 
+def reconcile_festive_sale_tags():
+    """Add festive_sale to already-stored shopping-sale articles."""
+    from sector_keywords import is_festive_sale_relevant, normalize_sector_tags
+
+    added = 0
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT id, title, subtitle, body, summary, sectors
+               FROM articles
+               WHERE duplicate_of IS NULL AND relevant = 1"""
+        ).fetchall()
+        for row in rows:
+            sectors = normalize_sector_tags(json.loads(row["sectors"] or "[]"))
+            if "festive_sale" in sectors:
+                continue
+            if not is_festive_sale_relevant(
+                row["title"],
+                row["body"] or row["summary"] or "",
+                row["subtitle"] or "",
+            ):
+                continue
+            sectors.insert(0, "festive_sale")
+            conn.execute(
+                "UPDATE articles SET sectors = ? WHERE id = ?",
+                (json.dumps(sectors), row["id"]),
+            )
+            added += 1
+    return {"added": added, "removed": 0}
+
+
 def reconcile_taxonomy_tags(sector, remove_unmatched=False):
     """Add (and optionally remove) a taxonomy sector tag on already-stored news."""
     from sector_keywords import normalize_sector_tags

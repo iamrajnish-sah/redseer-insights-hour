@@ -702,21 +702,28 @@ def get_articles(sector: str = None, pub_date: str = None, search: str = None, d
 
 @app.get("/api/festive-sale")
 def get_festive_sale_news(days: int = 30, limit: int = 24):
-    """Public viewer strip: festive / mega-sale news across commerce platforms."""
+    """Public viewer strip for the Festive Sale sector."""
     days = max(1, min(int(days or 30), 90))
     limit = max(1, min(int(limit or 24), 60))
-    rows = database.get_relevant_articles(days=days)
-    articles = []
-    for row in rows:
-        item = _row_to_dict(row)
-        if is_festive_sale_relevant(
-            item.get("title") or "",
-            item.get("body") or item.get("summary") or "",
-            item.get("subtitle") or "",
-        ):
-            articles.append(item)
-        if len(articles) >= limit:
-            break
+    rows = database.get_relevant_articles(sector="festive_sale", days=days)
+    articles = [_row_to_dict(row) for row in rows[:limit]]
+    if len(articles) < limit:
+        # Backfill older rows that match festive keywords but were tagged
+        # before festive_sale became a first-class sector.
+        seen = {a["id"] for a in articles}
+        for row in database.get_relevant_articles(days=days):
+            if row["id"] in seen:
+                continue
+            item = _row_to_dict(row)
+            if is_festive_sale_relevant(
+                item.get("title") or "",
+                item.get("body") or item.get("summary") or "",
+                item.get("subtitle") or "",
+            ):
+                articles.append(item)
+                seen.add(item["id"])
+            if len(articles) >= limit:
+                break
     return {
         "label": "Festive Sale News",
         "days": days,
@@ -804,6 +811,72 @@ def cron_refresh_rss(
         return auto_refresh.try_auto_refresh(force=True, rss_only=True)
     except Exception as exc:
         raise HTTPException(500, f"RSS cron failed: {exc}") from exc
+
+
+@app.get("/api/cron/refresh-hourly")
+def cron_refresh_hourly(
+    authorization: str = Header(default=None, alias="Authorization"),
+    user_agent: str = Header(default=None, alias="User-Agent"),
+    x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
+    x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
+):
+    """Hourly cron: RSS + Festive Sale GNews, then summarize new articles."""
+    if not _cron_allowed(
+        authorization, user_agent, x_vercel_cron_schedule, x_admin_password
+    ):
+        raise HTTPException(401, "Unauthorized")
+    try:
+        summary = auto_refresh.try_auto_refresh(force=True, rss_only=True)
+        retagged = database.reconcile_festive_sale_tags()
+        if retagged.get("added"):
+            database.persist()
+        festive = {"inserted": 0, "refreshed": 0, "skipped": True}
+        if os.environ.get("GNEWSAPIKEY") or os.environ.get("GNEWS_API_KEY"):
+            try:
+                festive = _refresh_one_sector("festive_sale")
+            except Exception as exc:
+                festive = {"error": str(exc), "inserted": 0, "refreshed": 0}
+        classified = 0
+        if os.environ.get("GEMINIAPIKEY") or os.environ.get("GEMINI_API_KEY"):
+            try:
+                process_rows, settings, _, _ = classify_and_summarize.get_rows_for_processing()
+                if process_rows:
+                    batch_opts = classify_and_summarize.batch_settings()
+                    results, _stats = classify_and_summarize.classify_batch(
+                        process_rows[: int(os.environ.get("HOURLY_GEMINI_LIMIT", "12"))],
+                        batch_size=batch_opts["batch_size"],
+                        pause_between_calls=batch_opts["pause_between_calls"],
+                        body_chars=settings["body_chars"],
+                    )
+                    for row in process_rows:
+                        r = results.get(row["id"])
+                        if not r:
+                            continue
+                        database.update_classification(
+                            row["id"],
+                            r["is_relevant"],
+                            normalize_sector_tags(r["sectors"]),
+                            r["summary"],
+                        )
+                        classified += 1
+                    if classified:
+                        database.persist()
+            except Exception as exc:
+                summary = {**(summary or {}), "gemini_error": str(exc)}
+        return {
+            "ok": True,
+            "rss": summary,
+            "festive_sale": festive,
+            "retagged": retagged,
+            "classified": classified,
+            "message": (
+                f"Hourly refresh done — festive "
+                f"{festive.get('inserted', 0)} new / {festive.get('refreshed', 0)} updated, "
+                f"{retagged.get('added', 0)} retagged, {classified} summarized."
+            ),
+        }
+    except Exception as exc:
+        raise HTTPException(500, f"Hourly cron failed: {exc}") from exc
 
 
 @app.get("/api/cron/weekly-intelligence")
@@ -1308,26 +1381,28 @@ def _refresh_one_sector(sector):
 
 @app.post("/api/backfill-new-sectors")
 def backfill_new_sectors(_: None = Depends(admin_auth.require_admin)):
-    """Tag already-stored news for Chocolate; retag Media to short-form/audio only."""
-    if database.get_meta("new_sectors_backfill_v2") == "1":
+    """Tag already-stored news for Chocolate / Media / Festive Sale."""
+    if database.get_meta("new_sectors_backfill_v3") == "1":
         return {
             "skipped": True,
-            "message": "Chocolate and Media tags already backfilled.",
+            "message": "Chocolate, Media, and Festive Sale tags already backfilled.",
         }
     chocolate = database.reconcile_taxonomy_tags("chocolate", remove_unmatched=False)
     media = database.reconcile_taxonomy_tags(
         "media_entertainment", remove_unmatched=True
     )
-    database.set_meta("new_sectors_backfill_v2", "1")
+    festive = database.reconcile_festive_sale_tags()
+    database.set_meta("new_sectors_backfill_v3", "1")
     database.persist()
     return {
         "chocolate": chocolate,
         "media_entertainment": media,
+        "festive_sale": festive,
         "skipped": False,
         "message": (
-            f"Chocolate: {chocolate['added']} existing articles tagged. "
-            f"Media & Entertainment: {media['added']} short-form/audio tagged, "
-            f"{media['removed']} movie/Bollywood tags removed."
+            f"Chocolate: {chocolate['added']} tagged. "
+            f"Media & Entertainment: {media['added']} tagged, {media['removed']} removed. "
+            f"Festive Sale: {festive['added']} tagged."
         ),
     }
 

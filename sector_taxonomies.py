@@ -736,7 +736,7 @@ def gate_ai_sectors(sectors, confidences, title="", body="", subtitle=""):
     Explicit AI confidence below 80 is always dropped. Local taxonomy fallback
     is used only when an older model omits confidence entirely."""
     gated = []
-    allowed_non_taxonomy = {"ride_hailing", "cross_sector"}
+    allowed_non_taxonomy = {"ride_hailing", "festive_sale", "cross_sector"}
     for sector in sectors or []:
         taxonomy = TAXONOMIES.get(sector)
         if not taxonomy:

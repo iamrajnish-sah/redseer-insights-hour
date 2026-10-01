@@ -115,6 +115,9 @@ def _prepare_article(article, query_sector):
     if query_sector == "ride_hailing":
         if "ride_hailing" not in sectors:
             return None
+    elif query_sector == "festive_sale":
+        if "festive_sale" not in sectors:
+            sectors.insert(0, "festive_sale")
     elif query_sector in TAXONOMIES:
         # Taxonomy sectors (e.g. value_commerce) are never force-tagged:
         # the semantic classifier decides. Keep only if some sector matched.

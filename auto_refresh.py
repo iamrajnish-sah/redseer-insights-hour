@@ -48,7 +48,7 @@ def _hours(env_name, default):
 
 
 def rss_refresh_hours():
-    return _hours("RSS_REFRESH_HOURS", 2)
+    return _hours("RSS_REFRESH_HOURS", 1)
 
 
 def gnews_refresh_hours():
@@ -109,12 +109,12 @@ def refresh_status():
         "rss": {
             **_source_status(META_LAST_RSS, rss_refresh_hours()),
             "free": True,
-            "note": "Publisher RSS — no API quota, pulled every 2 hours on visit plus twice-daily cron.",
+            "note": "Publisher RSS — no API quota, pulled hourly via cron.",
         },
         "gnews": {
             **_source_status(META_LAST_GNEWS, gnews_refresh_hours(), configured=has_gnews),
             "free": False,
-            "note": "GNews.io free tier ~100 requests/day, 1 req/sec — every 4 hours.",
+            "note": "GNews.io — festive sale queried hourly; full sector sweep daily.",
         },
         "newsapi": {
             **_source_status(META_LAST_NEWSAPI, newsapi_refresh_hours(), configured=has_newsapi),
@@ -129,6 +129,7 @@ def refresh_status():
         "article_count": database.get_relevant_count(),
         "refresh_hours": rss_refresh_hours(),
         "sources": sources,
+        "cron_hourly": "0 * * * *",
         "cron_full": "0 8 * * *",
         "cron_rss": "0 14 * * *",
     }
