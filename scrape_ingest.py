@@ -216,13 +216,55 @@ def _mark_target(target_id, status, error=None):
     database.persist()
 
 
-def _sale_signal(text):
-    hay = (text or "").lower()
-    if is_festive_sale_relevant(hay):
+# Players we care about for festive monitoring (platforms + research houses).
+FESTIVE_PLAYERS = tuple(
+    list(FESTIVE_SALE_PLATFORM_MARKERS)
+    + [
+        "shopsy", "spoyl", "amazon india", "flipkart minutes", "ajio",
+        "redseer", "datum", "unicommerce", "bain", "bcg", "kantar",
+        "gokwik", "shiprocket", "eternal", "nykaa", "reliance",
+    ]
+)
+
+FESTIVE_CONTEXT = (
+    "festive", "festival", "diwali", "dussehra", "navratri", "dhanteras",
+    "big billion", "bbd", "great indian festival", "end of reason",
+    "pink friday", "prime day", "shopping festival", "mega sale",
+    "festive sale", "festival sale", "festive barometer", "festive outlook",
+    "festive gmv", "sale season", "online sale", "ecommerce sale",
+    "e-retail", "online retail", "how india shops", "festive shopping",
+    "festive deals", "festive offers", "discount festival",
+)
+
+
+def _festive_player_relevant(title, body="", url=""):
+    """Keep only festive-sale / named-player shopping stories — drop generic news."""
+    hay = f"{title or ''} {body or ''} {url or ''}".lower()
+    if not hay.strip():
+        return False
+    if is_festive_sale_relevant(title or "", body or ""):
         return True
-    markers = list(FESTIVE_SALE_KEYWORDS) + list(FESTIVE_SALE_PLATFORM_MARKERS)
-    markers += ["sale", "offer", "discount", "deal", "festive", "diwali", "bbd"]
-    return any(m in hay for m in markers if len(m) >= 3)
+    if any(k in hay for k in FESTIVE_SALE_KEYWORDS):
+        return True
+    has_player = any(p in hay for p in FESTIVE_PLAYERS)
+    has_festive = any(m in hay for m in FESTIVE_CONTEXT)
+    # Research / market reports about festive ecommerce
+    if has_festive and any(
+        x in hay
+        for x in ("gmv", "barometer", "outlook", "e-commerce", "ecommerce", "e-retail", "online retail", "market")
+    ):
+        return True
+    # Platform + explicit sale/festive language (not bare "amazon" alone)
+    if has_player and has_festive:
+        return True
+    if has_player and any(x in hay for x in ("sale", "deals", "discount", "offer", "gmv", "orders")):
+        return True
+    return False
+
+
+def _sale_signal(text):
+    """Back-compat alias used by older call sites."""
+    return _festive_player_relevant(text, "", "")
 
 
 def _clean_text(value):
@@ -230,63 +272,86 @@ def _clean_text(value):
     return text
 
 
-def scrape_website_target(target, max_links=None):
-    max_links = int(max_links or os.environ.get("WEBSITE_SCRAPE_MAX_LINKS", "12"))
+def scrape_website_target(target, max_links=None, fetch_detail=None, deadline=None):
+    """Fast festive-only listing scrape. Detail fetches are off by default."""
+    max_links = int(max_links or os.environ.get("WEBSITE_SCRAPE_MAX_LINKS", "4"))
+    if fetch_detail is None:
+        fetch_detail = os.environ.get("WEBSITE_SCRAPE_FETCH_DETAIL", "false").lower() in (
+            "1", "true", "yes",
+        )
+    if deadline is not None and time.monotonic() > deadline:
+        return []
+
     url = target["url"]
-    resp = requests.get(url, headers=HEADERS, timeout=25)
+    timeout = float(os.environ.get("WEBSITE_SCRAPE_TIMEOUT", "8"))
+    resp = requests.get(url, headers=HEADERS, timeout=timeout)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "lxml")
-    base = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+    # Also score page title / H1 for report landing pages with few links
+    page_heading = _clean_text(
+        (soup.title.get_text(" ", strip=True) if soup.title else "")
+        + " "
+        + " ".join(h.get_text(" ", strip=True) for h in soup.find_all(["h1", "h2"])[:4])
+    )
     seen = set()
     candidates = []
+
+    # If the landing page itself is a festive report, keep it as one card
+    if _festive_player_relevant(page_heading, "", url) and len(page_heading) >= 24:
+        candidates.append((page_heading[:300], url))
+
     for a in soup.find_all("a", href=True):
+        if deadline is not None and time.monotonic() > deadline:
+            break
         href = urljoin(url, a.get("href"))
         title = _clean_text(a.get_text(" ", strip=True))
-        if not title or len(title) < 18:
+        if not title or len(title) < 16:
             continue
         if href in seen:
             continue
         parsed = urlparse(href)
         if parsed.scheme not in ("http", "https"):
             continue
-        if parsed.netloc and urlparse(base).netloc not in parsed.netloc and "news" not in parsed.netloc:
-            # allow same site + common news CDNs; skip pure external junk
-            if urlparse(base).netloc.split(".")[-2:] != parsed.netloc.split(".")[-2:]:
-                continue
-        blob = f"{title} {href}"
-        if not _sale_signal(blob):
+        if not _festive_player_relevant(title, "", href):
             continue
         seen.add(href)
         candidates.append((title, href))
-        if len(candidates) >= max_links * 2:
+        if len(candidates) >= max_links:
             break
 
     articles = []
     today = date.today().isoformat()
-    sector = target.get("sector") or "festive_sale"
     label = target.get("label") or urlparse(url).netloc
     for title, href in candidates[:max_links]:
+        if deadline is not None and time.monotonic() > deadline:
+            break
         body = title
-        try:
-            detail = requests.get(href, headers=HEADERS, timeout=15)
-            if detail.ok and "text/html" in detail.headers.get("content-type", ""):
-                page = BeautifulSoup(detail.text, "lxml")
-                for tag in page(["script", "style", "noscript"]):
-                    tag.decompose()
-                paras = [
-                    _clean_text(p.get_text(" ", strip=True))
-                    for p in page.find_all(["p", "h1", "h2"])
-                ]
-                paras = [p for p in paras if len(p) > 40]
-                if paras:
-                    body = " ".join(paras[:8])[:2500]
-        except requests.RequestException:
-            pass
-        sectors = match_sectors(title, body)
-        if sector not in sectors:
-            sectors.insert(0, sector)
-        if "festive_sale" not in sectors and is_festive_sale_relevant(title, body):
-            sectors.insert(0, "festive_sale")
+        if fetch_detail and href != url:
+            try:
+                detail = requests.get(href, headers=HEADERS, timeout=min(6.0, timeout))
+                ctype = detail.headers.get("content-type", "")
+                if detail.ok and "html" in ctype:
+                    page = BeautifulSoup(detail.text, "lxml")
+                    for tag in page(["script", "style", "noscript"]):
+                        tag.decompose()
+                    paras = [
+                        _clean_text(p.get_text(" ", strip=True))
+                        for p in page.find_all(["p", "h1", "h2"])
+                    ]
+                    paras = [p for p in paras if len(p) > 40]
+                    if paras:
+                        body = " ".join(paras[:5])[:1800]
+            except requests.RequestException:
+                pass
+            # Drop after detail if still not festive
+            if not _festive_player_relevant(title, body, href):
+                continue
+        sectors = ["festive_sale"]
+        # Keep commerce tag when a marketplace player is named
+        extra = match_sectors(title, body)
+        for s in extra:
+            if s not in sectors and s != "cross_sector":
+                sectors.append(s)
         articles.append(
             Article(
                 source=label,
@@ -405,15 +470,13 @@ def scrape_instagram_target(target, max_posts=None):
                     pub_date = str(timestamp)[:10]
             except (ValueError, OSError, TypeError):
                 pub_date = today
-        if not _sale_signal(f"{title} {caption}") and not is_festive_sale_relevant(title, caption):
-            # Still keep brand posts from tracked festive accounts — lightly tag
-            sectors = [sector]
-        else:
-            sectors = match_sectors(title, caption)
-            if sector not in sectors:
-                sectors.insert(0, sector)
-            if "festive_sale" not in sectors:
-                sectors.insert(0, "festive_sale")
+        # Instagram: only festive/sale posts — skip lifestyle fluff
+        if not _festive_player_relevant(title, caption, post_url):
+            continue
+        sectors = ["festive_sale"]
+        for s in match_sectors(title, caption):
+            if s not in sectors and s != "cross_sector":
+                sectors.append(s)
         articles.append(
             Article(
                 source=label,
@@ -432,15 +495,29 @@ def scrape_instagram_target(target, max_posts=None):
     return articles
 
 
-def run_target(target_id):
+def _scrape_budget_seconds():
+    default = "45" if os.environ.get("VERCEL") else "90"
+    return float(os.environ.get("SCRAPE_BUDGET_SECONDS", default))
+
+
+def run_target(target_id, deadline=None):
     target = get_target(target_id)
     if not target:
         raise LookupError("Scrape target not found")
     kind = target["kind"]
     try:
         if kind == KIND_WEBSITE:
-            articles = scrape_website_target(target)
+            articles = scrape_website_target(target, deadline=deadline)
         elif kind == KIND_INSTAGRAM:
+            if deadline is not None and time.monotonic() > deadline:
+                return {
+                    "ok": False,
+                    "target_id": target_id,
+                    "kind": kind,
+                    "label": target.get("label"),
+                    "skipped": True,
+                    "reason": "time_budget",
+                }
             articles = scrape_instagram_target(target)
         else:
             raise ValueError(f"Unsupported kind: {kind}")
@@ -462,11 +539,28 @@ def run_target(target_id):
 
 
 def run_all_enabled(kind=None):
+    """Run enabled targets with a hard time budget (festive-only results)."""
     targets = list_targets(kind=kind, enabled_only=True)
+    budget = _scrape_budget_seconds()
+    deadline = time.monotonic() + budget
     results = []
+    stopped_early = False
     for target in targets:
+        if time.monotonic() > deadline:
+            stopped_early = True
+            results.append(
+                {
+                    "ok": False,
+                    "target_id": target["id"],
+                    "kind": target["kind"],
+                    "label": target.get("label"),
+                    "skipped": True,
+                    "reason": "time_budget",
+                }
+            )
+            continue
         try:
-            results.append(run_target(target["id"]))
+            results.append(run_target(target["id"], deadline=deadline))
         except Exception as exc:
             results.append(
                 {
@@ -474,14 +568,29 @@ def run_all_enabled(kind=None):
                     "target_id": target["id"],
                     "kind": target["kind"],
                     "label": target.get("label"),
-                    "error": str(exc),
+                    "error": str(exc)[:240],
                 }
             )
+    inserted = sum(int(r.get("inserted") or 0) for r in results if r.get("ok"))
+    refreshed = sum(int(r.get("refreshed") or 0) for r in results if r.get("ok"))
+    fetched = sum(int(r.get("fetched") or 0) for r in results if r.get("ok"))
     return {
         "ran": len(results),
         "ok_count": sum(1 for r in results if r.get("ok")),
+        "inserted": inserted,
+        "refreshed": refreshed,
+        "fetched": fetched,
+        "stopped_early": stopped_early,
+        "budget_seconds": budget,
+        "festive_only": True,
+        "results_location": "Festive Sale tab + Festive Sale News strip",
         "results": results,
         "apify_configured": apify_configured(),
+        "message": (
+            f"Festive scrape done — {fetched} relevant items, {inserted} new, "
+            f"{refreshed} updated. Open the Festive Sale tab to view."
+            + (" (stopped early on time budget; run again for remaining sites)" if stopped_early else "")
+        ),
     }
 
 

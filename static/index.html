@@ -1051,12 +1051,12 @@
     <div class="scrape-boxes" id="scrapeBoxes">
       <div class="scrape-box" id="websiteScrapeBox">
         <h3>Website scraping</h3>
-        <p>Research firms + company newsrooms (Redseer, Bain, Flipkart Stories, Amazon press, Meesho, etc.). Matching festive/sale links go to Festive Sale.</p>
+        <p>Only <strong>festive sale + related players</strong> are kept (BBD, GIF, Diwali sales, Flipkart/Amazon/Meesho…). Results appear in the <strong>Festive Sale</strong> tab and the Festive Sale News strip — not under All sectors only.</p>
         <div class="scrape-form">
           <input class="form-input" id="websiteScrapeUrl" type="url" placeholder="https://brand.com/sale">
           <input class="form-input" id="websiteScrapeLabel" type="text" placeholder="Label (optional)">
           <button class="btn btn-primary btn-sm" type="button" onclick="addWebsiteScrapeTarget()">Add site</button>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="runScrapeKind('website')">Run all sites</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="runScrapeKind('website')">Run festive sites</button>
         </div>
         <ul class="scrape-target-list" id="websiteTargetList"></ul>
       </div>
@@ -1749,21 +1749,46 @@ async function deleteScrapeTarget(id) {
   } catch (e) { setStatus(e.message, true); }
 }
 
+function showFestiveSaleResults() {
+  // Jump UI to where scrape results live
+  const tabs = document.querySelectorAll("#tabs .tab");
+  for (const tab of tabs) {
+    if ((tab.textContent || "").toLowerCase().includes("festive")) {
+      selectTab("festive_sale", tab);
+      break;
+    }
+  }
+  const hub = document.getElementById("festiveHub");
+  const btn = document.getElementById("festiveHubToggle");
+  if (hub && !hub.classList.contains("is-open")) {
+    hub.classList.add("is-open");
+    if (btn) btn.setAttribute("aria-expanded", "true");
+  }
+  if (hub) hub.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 async function runScrapeTarget(id) {
-  setStatus("Running scrape target…");
+  setStatus("Scraping festive/player content from this target…");
   try {
     const resp = await adminFetch(API + `/api/admin/scrape/targets/${id}/run`, { method: "POST" });
     const data = await readJson(resp);
     if (!resp.ok) throw new Error(data.detail || data.error || "Scrape failed");
-    setStatus(`Scrape done — ${data.inserted || 0} new, ${data.refreshed || 0} updated.`);
+    setStatus(
+      `Done — ${data.fetched || 0} festive items · ${data.inserted || 0} new · ${data.refreshed || 0} updated. Open Festive Sale tab.`
+    );
     await loadScrapeTargets();
     await loadFestiveSaleNews();
+    showFestiveSaleResults();
     await loadArticles();
   } catch (e) { setStatus(e.message, true); }
 }
 
 async function runScrapeKind(kind) {
-  setStatus(`Running all ${kind} scrapes…`);
+  setStatus(
+    kind === "website"
+      ? "Scraping festive sale pages only (fast mode)… results go to Festive Sale tab"
+      : "Scraping festive Instagram posts… results go to Festive Sale tab"
+  );
   try {
     const resp = await adminFetch(API + "/api/admin/scrape/run", {
       method: "POST",
@@ -1772,11 +1797,29 @@ async function runScrapeKind(kind) {
     });
     const data = await readJson(resp);
     if (!resp.ok) throw new Error(data.detail || "Scrape failed");
-    setStatus(`Scrape finished — ${data.ok_count || 0}/${data.ran || 0} ok.`);
+    const msg = data.message || (
+      `Festive scrape finished — ${data.fetched || 0} relevant · ${data.inserted || 0} new · ` +
+      `${data.ok_count || 0}/${data.ran || 0} sites ok. See Festive Sale tab.`
+    );
+    setStatus(msg);
     await loadScrapeTargets();
     await loadFestiveSaleNews();
+    showFestiveSaleResults();
     await loadArticles();
-  } catch (e) { setStatus(e.message, true); }
+  } catch (e) {
+    const err = e.message || String(e);
+    if (/timeout|timed out|failed to fetch|network/i.test(err)) {
+      setStatus(
+        "Scrape timed out on the host — refresh and open the Festive Sale tab; partial results may already be saved. Retry Run festive sites.",
+        true
+      );
+      await loadFestiveSaleNews();
+      showFestiveSaleResults();
+      await loadArticles();
+    } else {
+      setStatus(err, true);
+    }
+  }
 }
 
 async function seedDefaultScrapeTargets() {
