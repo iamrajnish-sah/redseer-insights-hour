@@ -40,6 +40,7 @@ import auto_refresh
 import scrape_ingest
 import festive_jobs
 import report_export
+import scrape_export
 from db_path import using_persistent_disk
 from db_persist import restore_db, save_db, storage_status, enabled
 
@@ -782,6 +783,56 @@ def get_festive_sale_news(days: int = 30, limit: int = 24):
         "count": len(articles),
         "articles": articles,
     }
+
+
+@app.get("/api/scrape/website")
+def get_website_scrape_news(days: int = 30, limit: int = 36):
+    """Dedicated box: news captured from website scrape targets."""
+    rows = database.get_scrape_articles("website_scrape", days=days, limit=limit)
+    articles = [_row_to_dict(row) for row in rows]
+    return {
+        "label": "Website scrape news",
+        "origin": "website_scrape",
+        "days": max(1, min(int(days or 30), 90)),
+        "count": len(articles),
+        "articles": articles,
+    }
+
+
+@app.get("/api/scrape/instagram")
+def get_instagram_scrape_news(days: int = 30, limit: int = 36):
+    """Dedicated box: posts captured from Instagram scrape targets."""
+    rows = database.get_scrape_articles("instagram", days=days, limit=limit)
+    articles = [_row_to_dict(row) for row in rows]
+    return {
+        "label": "Instagram scrape news",
+        "origin": "instagram",
+        "days": max(1, min(int(days or 30), 90)),
+        "count": len(articles),
+        "articles": articles,
+        "excel_ready": True,
+        "excel_note": (
+            "Download Excel now with the default festive columns. "
+            "Share your preferred column layout after Apify is set and we will match it."
+        ),
+    }
+
+
+@app.get("/api/scrape/instagram/export.xlsx")
+def export_instagram_scrape_excel(days: int = 30, limit: int = 500):
+    """Excel export of Instagram scrape rows (format adjustable later)."""
+    rows = database.get_scrape_articles("instagram", days=days, limit=limit)
+    articles = [_row_to_dict(row) for row in rows]
+    try:
+        data = scrape_export.instagram_articles_to_xlsx_bytes(articles)
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    filename = f"instagram-festive-scrape-{date.today().isoformat()}.xlsx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.delete("/api/admin/articles/{article_id}")

@@ -708,7 +708,15 @@ def get_stats():
     return {"total": total, "unprocessed": unprocessed, "relevant": relevant}
 
 
-def get_relevant_articles(pub_date=None, sector=None, search=None, days=None, start_date=None, end_date=None):
+def get_relevant_articles(
+    pub_date=None,
+    sector=None,
+    search=None,
+    days=None,
+    start_date=None,
+    end_date=None,
+    origin=None,
+):
     query = "SELECT * FROM articles WHERE relevant=1 AND duplicate_of IS NULL"
     params = []
     if start_date and end_date:
@@ -723,6 +731,9 @@ def get_relevant_articles(pub_date=None, sector=None, search=None, days=None, st
     elif days:
         query += " AND pub_date >= date('now', ?)"
         params.append(f"-{int(days)} days")
+    if origin:
+        query += " AND origin = ?"
+        params.append(origin)
     if sector:
         if sector == "cross_sector":
             query += " AND (sectors LIKE ? OR sectors LIKE ?)"
@@ -745,6 +756,14 @@ def get_relevant_articles(pub_date=None, sector=None, search=None, days=None, st
     with get_conn() as conn:
         rows = conn.execute(query, params).fetchall()
     return rows
+
+
+def get_scrape_articles(origin, days=30, limit=40):
+    """Website / Instagram scrape cards for the dedicated result boxes."""
+    days = max(1, min(int(days or 30), 90))
+    limit = max(1, min(int(limit or 40), 200))
+    rows = get_relevant_articles(origin=origin, days=days)
+    return rows[:limit]
 
 
 def reconcile_ride_hailing_tags():

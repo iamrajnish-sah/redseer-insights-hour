@@ -9,4 +9,5 @@ uvicorn
 python-multipart
 pypdf
 python-docx
+openpyxl
 vercel>=0.0.8

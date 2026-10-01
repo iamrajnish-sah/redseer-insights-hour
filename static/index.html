@@ -782,8 +782,32 @@
     gap: 14px;
     margin-top: 14px;
   }
+  .scrape-results-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 14px 0 8px;
+  }
   @media (max-width: 820px) {
     .scrape-boxes { grid-template-columns: 1fr; }
+    .scrape-results-row { grid-template-columns: 1fr; }
+  }
+  .panel-scrape-results {
+    margin: 0;
+    border-color: #fcd34d;
+    background: linear-gradient(180deg, #fffbeb 0%, #ffffff 55%);
+  }
+  .panel-scrape-results.panel-instagram {
+    border-color: #f9a8d4;
+    background: linear-gradient(180deg, #fdf2f8 0%, #ffffff 55%);
+  }
+  .panel-scrape-results .intel-hub-kicker { color: #b45309; }
+  .panel-instagram .intel-hub-kicker { color: #be185d; }
+  .scrape-result-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
   }
   .scrape-box {
     border: 1px solid var(--border-strong);
@@ -1127,6 +1151,38 @@
     </div>
   </section>
 
+  <div class="scrape-results-row" id="scrapeResultsRow">
+    <section class="panel panel-intel panel-scrape-results is-open" id="websiteResultsHub">
+      <button type="button" class="intel-hub-toggle" id="websiteResultsToggle" aria-expanded="true" onclick="toggleScrapeResultsHub('website')">
+        <span class="intel-hub-kicker">Website scrape news</span>
+        <span class="intel-hub-hint" id="websiteResultsHint">News pulled from tracked research sites & newsrooms</span>
+        <span class="intel-hub-chevron" aria-hidden="true">▾</span>
+      </button>
+      <div class="intel-hub-body" id="websiteResultsBody">
+        <div class="scrape-result-actions">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="loadWebsiteScrapeNews()">↻ Refresh</button>
+        </div>
+        <div class="intel-strip" id="websiteResultsStrip"></div>
+      </div>
+    </section>
+
+    <section class="panel panel-intel panel-scrape-results panel-instagram is-open" id="instagramResultsHub">
+      <button type="button" class="intel-hub-toggle" id="instagramResultsToggle" aria-expanded="true" onclick="toggleScrapeResultsHub('instagram')">
+        <span class="intel-hub-kicker">Instagram scrape news</span>
+        <span class="intel-hub-hint" id="instagramResultsHint">Posts from tracked brand handles · Excel export ready</span>
+        <span class="intel-hub-chevron" aria-hidden="true">▾</span>
+      </button>
+      <div class="intel-hub-body" id="instagramResultsBody">
+        <div class="scrape-result-actions">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="loadInstagramScrapeNews()">↻ Refresh</button>
+          <a class="btn btn-primary btn-sm" id="btnIgExcel" href="/api/scrape/instagram/export.xlsx?days=30&limit=500">⬇ Download Excel</a>
+        </div>
+        <p class="scrape-meta" id="instagramExcelNote">Excel uses a default festive column layout. Share your sheet format after Apify is set and we will match it.</p>
+        <div class="intel-strip" id="instagramResultsStrip"></div>
+      </div>
+    </section>
+  </div>
+
   <main>
     <div class="grid" id="grid"></div>
     <div class="load-more-wrap" id="loadMoreWrap" style="display:none;">
@@ -1345,6 +1401,8 @@ async function init() {
   await loadArticles();
   await loadIntelligenceBriefs();
   await loadFestiveSaleNews();
+  await loadWebsiteScrapeNews();
+  await loadInstagramScrapeNews();
   await maybeAutoRefresh();
 }
 
@@ -1626,6 +1684,85 @@ async function loadFestiveSaleNews() {
   }
 }
 
+function toggleScrapeResultsHub(kind) {
+  const hubId = kind === "instagram" ? "instagramResultsHub" : "websiteResultsHub";
+  const btnId = kind === "instagram" ? "instagramResultsToggle" : "websiteResultsToggle";
+  const hub = document.getElementById(hubId);
+  const btn = document.getElementById(btnId);
+  if (!hub || !btn) return;
+  const open = !hub.classList.contains("is-open");
+  hub.classList.toggle("is-open", open);
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function renderScrapeResultCards(articles, emptyTitle, emptyBody) {
+  if (!articles.length) {
+    return `<div class="intel-card">
+      <div class="intel-meta">Scrape feed</div>
+      <h3>${escapeHtml(emptyTitle)}</h3>
+      <p>${escapeHtml(emptyBody)}</p>
+    </div>`;
+  }
+  return articles.map((a) => {
+    const summary = cardSummary(a) || a.body || "Open the full story.";
+    const source = a.source || "Source";
+    const href = a.resolved_url || a.url || "#";
+    return `<a class="intel-card" href="${escapeAttr(href)}" target="_blank" rel="noopener">
+      <div class="intel-meta">${escapeHtml(source)} · ${escapeHtml(a.pub_date || "")}</div>
+      <h3>${escapeHtml(a.title || "Scraped story")}</h3>
+      <p>${escapeHtml(String(summary).slice(0, 180))}</p>
+    </a>`;
+  }).join("");
+}
+
+async function loadWebsiteScrapeNews() {
+  const wrap = document.getElementById("websiteResultsStrip");
+  const hint = document.getElementById("websiteResultsHint");
+  if (!wrap) return;
+  try {
+    const data = await (await fetch(API + "/api/scrape/website?days=30&limit=36")).json();
+    const articles = (data && data.articles) || [];
+    if (hint) {
+      hint.textContent = articles.length
+        ? `${articles.length} website scrape item${articles.length === 1 ? "" : "s"} · festive / player only`
+        : "Run festive sites in Backend Management to fill this box";
+    }
+    wrap.innerHTML = renderScrapeResultCards(
+      articles,
+      "No website scrape news yet",
+      "Open Backend Management → Run festive sites. Matching research/newsroom links will appear here."
+    );
+  } catch (_) {
+    wrap.innerHTML = "";
+    if (hint) hint.textContent = "News pulled from tracked research sites & newsrooms";
+  }
+}
+
+async function loadInstagramScrapeNews() {
+  const wrap = document.getElementById("instagramResultsStrip");
+  const hint = document.getElementById("instagramResultsHint");
+  const note = document.getElementById("instagramExcelNote");
+  if (!wrap) return;
+  try {
+    const data = await (await fetch(API + "/api/scrape/instagram?days=30&limit=36")).json();
+    const articles = (data && data.articles) || [];
+    if (hint) {
+      hint.textContent = articles.length
+        ? `${articles.length} Instagram post${articles.length === 1 ? "" : "s"} · download Excel anytime`
+        : "Add APIFY_TOKEN, then Run all IG — posts show here";
+    }
+    if (note && data.excel_note) note.textContent = data.excel_note;
+    wrap.innerHTML = renderScrapeResultCards(
+      articles,
+      "No Instagram scrape news yet",
+      "Set APIFY_TOKEN, load default IG handles, then Run all IG. Festive posts will appear here and in Excel."
+    );
+  } catch (_) {
+    wrap.innerHTML = "";
+    if (hint) hint.textContent = "Posts from tracked brand handles · Excel export ready";
+  }
+}
+
 async function toggleBackendPanel() {
   const panel = document.getElementById("backendPanel");
   const btn = document.getElementById("btnBackendToggle");
@@ -1749,8 +1886,8 @@ async function deleteScrapeTarget(id) {
   } catch (e) { setStatus(e.message, true); }
 }
 
-function showFestiveSaleResults() {
-  // Jump UI to where scrape results live
+function showFestiveSaleResults(kind) {
+  // Jump UI to dedicated scrape result boxes + Festive Sale tab
   const tabs = document.querySelectorAll("#tabs .tab");
   for (const tab of tabs) {
     if ((tab.textContent || "").toLowerCase().includes("festive")) {
@@ -1764,7 +1901,16 @@ function showFestiveSaleResults() {
     hub.classList.add("is-open");
     if (btn) btn.setAttribute("aria-expanded", "true");
   }
-  if (hub) hub.scrollIntoView({ behavior: "smooth", block: "start" });
+  const preferIg = kind === "instagram";
+  const resultHub = document.getElementById(preferIg ? "instagramResultsHub" : "websiteResultsHub");
+  const resultBtn = document.getElementById(preferIg ? "instagramResultsToggle" : "websiteResultsToggle");
+  if (resultHub) {
+    resultHub.classList.add("is-open");
+    if (resultBtn) resultBtn.setAttribute("aria-expanded", "true");
+    resultHub.scrollIntoView({ behavior: "smooth", block: "start" });
+  } else if (hub) {
+    hub.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 }
 
 async function runScrapeTarget(id) {
@@ -1774,11 +1920,13 @@ async function runScrapeTarget(id) {
     const data = await readJson(resp);
     if (!resp.ok) throw new Error(data.detail || data.error || "Scrape failed");
     setStatus(
-      `Done — ${data.fetched || 0} festive items · ${data.inserted || 0} new · ${data.refreshed || 0} updated. Open Festive Sale tab.`
+      `Done — ${data.fetched || 0} festive items · ${data.inserted || 0} new · ${data.refreshed || 0} updated. See the scrape boxes above the news.`
     );
     await loadScrapeTargets();
     await loadFestiveSaleNews();
-    showFestiveSaleResults();
+    await loadWebsiteScrapeNews();
+    await loadInstagramScrapeNews();
+    showFestiveSaleResults(data.kind);
     await loadArticles();
   } catch (e) { setStatus(e.message, true); }
 }
@@ -1786,8 +1934,8 @@ async function runScrapeTarget(id) {
 async function runScrapeKind(kind) {
   setStatus(
     kind === "website"
-      ? "Scraping festive sale pages only (fast mode)… results go to Festive Sale tab"
-      : "Scraping festive Instagram posts… results go to Festive Sale tab"
+      ? "Scraping festive sale pages only… results appear in the Website scrape news box"
+      : "Scraping festive Instagram posts… results appear in the Instagram scrape news box"
   );
   try {
     const resp = await adminFetch(API + "/api/admin/scrape/run", {
@@ -1797,24 +1945,31 @@ async function runScrapeKind(kind) {
     });
     const data = await readJson(resp);
     if (!resp.ok) throw new Error(data.detail || "Scrape failed");
-    const msg = data.message || (
-      `Festive scrape finished — ${data.fetched || 0} relevant · ${data.inserted || 0} new · ` +
-      `${data.ok_count || 0}/${data.ran || 0} sites ok. See Festive Sale tab.`
-    );
+    const boxName = kind === "instagram" ? "Instagram scrape news box" : "Website scrape news box";
+    const msg = data.message
+      ? `${data.message} → ${boxName}`
+      : (
+        `Festive scrape finished — ${data.fetched || 0} relevant · ${data.inserted || 0} new · ` +
+        `${data.ok_count || 0}/${data.ran || 0} ok. See ${boxName}.`
+      );
     setStatus(msg);
     await loadScrapeTargets();
     await loadFestiveSaleNews();
-    showFestiveSaleResults();
+    await loadWebsiteScrapeNews();
+    await loadInstagramScrapeNews();
+    showFestiveSaleResults(kind);
     await loadArticles();
   } catch (e) {
     const err = e.message || String(e);
     if (/timeout|timed out|failed to fetch|network/i.test(err)) {
       setStatus(
-        "Scrape timed out on the host — refresh and open the Festive Sale tab; partial results may already be saved. Retry Run festive sites.",
+        "Scrape timed out — refresh and check the Website / Instagram scrape boxes above the news; partial results may already be saved.",
         true
       );
       await loadFestiveSaleNews();
-      showFestiveSaleResults();
+      await loadWebsiteScrapeNews();
+      await loadInstagramScrapeNews();
+      showFestiveSaleResults(kind);
       await loadArticles();
     } else {
       setStatus(err, true);
