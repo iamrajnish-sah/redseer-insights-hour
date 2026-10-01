@@ -307,6 +307,51 @@ GOOGLE_NEWS_QUERIES["media_entertainment"] = (
     "OR Pratilipi OR Tadka microdrama OR JioSaavn OR microdrama India "
     'OR "short drama" OR "audio streaming" India) when:7d'
 )
+
+# Viewer strip only — not a sector tab. Used by Google News RSS + /api/festive-sale.
+FESTIVE_SALE_KEYWORDS = [
+    # Named platform sales
+    "big billion days", "big billion day", "bbd sale", "flipkart bbd",
+    "great indian festival", "amazon great indian", "amazon festive sale",
+    "amazon prime day", "prime day india",
+    "myntra end of reason", "end of reason sale", "myntra festive sale",
+    "meesho festive", "meesho sale", "meesho diwali",
+    "nykaa sale", "nykaa pink friday", "pink friday sale",
+    "ajio sale", "ajio festive", "ajio luxe sale",
+    "snapdeal sale", "jiomart sale", "shopsy sale",
+    "tata cliq sale", "tata neu sale", "croma festive",
+    "reliance digital sale", "vijay sales festive",
+    # Quick commerce / grocery festive deals
+    "blinkit sale", "zepto sale", "instamart sale", "bigbasket sale",
+    "quick commerce sale", "grocery festive sale",
+    # Broad festive shopping language
+    "festive sale", "festival sale", "diwali sale", "dussehra sale",
+    "navratri sale", "dhanteras sale", "christmas sale india",
+    "festive shopping", "festival shopping", "festive deals",
+    "shopping festival", "sale season india", "mega sale india",
+    "independence day sale", "republic day sale", "holi sale",
+]
+
+FESTIVE_SALE_PLATFORM_MARKERS = (
+    "amazon", "flipkart", "myntra", "meesho", "nykaa", "ajio", "snapdeal",
+    "jiomart", "shopsy", "tata cliq", "tata neu", "croma", "reliance digital",
+    "reliance retail", "vijay sales",
+    "blinkit", "zepto", "instamart", "bigbasket", "swiggy", "zomato",
+    "ondc",
+)
+
+FESTIVE_SALE_EVENT_MARKERS = (
+    "sale", "deals", "discount", "festive", "festival", "diwali", "dussehra",
+    "navratri", "dhanteras", "bbd", "big billion", "great indian festival",
+    "end of reason", "pink friday", "prime day", "shopping festival",
+)
+
+FESTIVE_SALE_GOOGLE_NEWS_QUERY = (
+    '("Big Billion Days" OR "Great Indian Festival" OR "End of Reason" Sale OR '
+    '"Nykaa sale" OR "Meesho sale" OR "Ajio sale" OR "festive sale" India OR '
+    '"Diwali sale" OR Blinkit sale OR Zepto sale OR "Prime Day" India) when:14d'
+)
+
 NEWSAPI_HEADLINE_QUERIES = dict(GNEWS_QUERIES)
 
 INDIA_NEWS_MARKERS = (
@@ -405,6 +450,45 @@ def is_ride_hailing_relevant(title, body="", subtitle=""):
     return False
 
 
+def is_festive_sale_relevant(title, body="", subtitle=""):
+    """True for India festive / mega-sale shopping news across platforms."""
+    haystack = _normalize(f"{title} {subtitle} {body}")
+    if not haystack.strip():
+        return False
+    if _any_phrase(haystack, FESTIVE_SALE_KEYWORDS):
+        return True
+    has_platform = _any_phrase(haystack, FESTIVE_SALE_PLATFORM_MARKERS)
+    has_event = _any_phrase(haystack, FESTIVE_SALE_EVENT_MARKERS)
+    # Require a commerce platform plus festive/sale language so generic
+    # "festival" culture stories do not enter the strip.
+    return has_platform and has_event and (
+        "sale" in haystack
+        or "deal" in haystack
+        or "discount" in haystack
+        or "festive" in haystack
+        or "festival shopping" in haystack
+        or "shopping festival" in haystack
+    )
+
+
+def _festive_sale_fallback_sector(haystack):
+    """Best-effort sector when a festive-sale story has no taxonomy match."""
+    if _any_phrase(haystack, ("blinkit", "zepto", "instamart", "bigbasket", "quick commerce")):
+        return "quick_commerce"
+    if _any_phrase(haystack, ("meesho", "shopsy", "jiomart", "snapdeal")):
+        return "value_commerce"
+    if _any_phrase(haystack, ("myntra", "ajio", "end of reason")):
+        return "fashion"
+    if _any_phrase(haystack, ("nykaa", "pink friday")):
+        return "bpc"
+    if _any_phrase(
+        haystack,
+        ("amazon", "flipkart", "tata cliq", "tata neu", "croma", "ondc", "reliance retail", "vijay sales"),
+    ):
+        return "e_commerce"
+    return "cross_sector"
+
+
 def match_sectors(title, body="", subtitle=""):
     """Return precise sector tags using taxonomies plus legacy specialist rules."""
     haystack = _normalize(f"{title} {subtitle} {body}")
@@ -427,6 +511,8 @@ def match_sectors(title, body="", subtitle=""):
             if kw.lower() in haystack:
                 matched.append(sector)
                 break
+    if not matched and is_festive_sale_relevant(title, body, subtitle):
+        matched.append(_festive_sale_fallback_sector(haystack))
     if not matched:
         for kw in INDIRECT_KEYWORDS:
             if kw.lower() in haystack:

@@ -44,6 +44,7 @@ from sector_keywords import (
     GNEWS_QUERIES,
     GOOGLE_NEWS_QUERIES,
     normalize_sector_tags,
+    is_festive_sale_relevant,
 )
 
 app = FastAPI(title="Redseer Insight Hour")
@@ -697,6 +698,31 @@ def get_articles(sector: str = None, pub_date: str = None, search: str = None, d
     rows = database.get_relevant_articles(pub_date=pub_date, sector=sector, search=search, days=days)
     articles = [_row_to_dict(r) for r in rows]
     return articles
+
+
+@app.get("/api/festive-sale")
+def get_festive_sale_news(days: int = 30, limit: int = 24):
+    """Public viewer strip: festive / mega-sale news across commerce platforms."""
+    days = max(1, min(int(days or 30), 90))
+    limit = max(1, min(int(limit or 24), 60))
+    rows = database.get_relevant_articles(days=days)
+    articles = []
+    for row in rows:
+        item = _row_to_dict(row)
+        if is_festive_sale_relevant(
+            item.get("title") or "",
+            item.get("body") or item.get("summary") or "",
+            item.get("subtitle") or "",
+        ):
+            articles.append(item)
+        if len(articles) >= limit:
+            break
+    return {
+        "label": "Festive Sale News",
+        "days": days,
+        "count": len(articles),
+        "articles": articles,
+    }
 
 
 @app.delete("/api/admin/articles/{article_id}")
