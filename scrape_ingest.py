@@ -24,6 +24,7 @@ import requests
 from bs4 import BeautifulSoup
 
 import database
+from scrape_targets_seed import all_default_targets
 from sector_keywords import (
     is_festive_sale_relevant,
     match_sectors,
@@ -493,4 +494,46 @@ def status_summary():
         "instagram_count": sum(1 for t in targets if t["kind"] == KIND_INSTAGRAM),
         "enabled_count": sum(1 for t in targets if t.get("enabled")),
         "targets": targets,
+        "default_seed_count": len(all_default_targets()),
+    }
+
+
+def _target_key(kind, url, handle=None):
+    kind = (kind or "").strip().lower()
+    if kind == KIND_INSTAGRAM:
+        return (KIND_INSTAGRAM, _normalize_handle(handle or url).lower())
+    return (KIND_WEBSITE, (url or "").strip().rstrip("/").lower())
+
+
+def seed_default_targets(force=False):
+    """Insert curated research/newsroom/Instagram targets if missing."""
+    init_scrape_tables()
+    existing = list_targets()
+    seen = {_target_key(t["kind"], t.get("url"), t.get("handle")) for t in existing}
+    added = []
+    skipped = 0
+    for kind, label, url in all_default_targets():
+        key = _target_key(kind, url, url if kind == KIND_INSTAGRAM else None)
+        if key in seen and not force:
+            skipped += 1
+            continue
+        if key in seen and force:
+            skipped += 1
+            continue
+        try:
+            target = add_target(kind=kind, url=url, label=label, sector="festive_sale")
+            added.append(target)
+            seen.add(key)
+        except ValueError as exc:
+            skipped += 1
+            print(f"  [scrape seed] skip {label}: {exc}")
+    return {
+        "ok": True,
+        "added": len(added),
+        "skipped": skipped,
+        "total_defaults": len(all_default_targets()),
+        "targets_added": [
+            {"id": t["id"], "kind": t["kind"], "label": t.get("label"), "url": t.get("url")}
+            for t in added
+        ],
     }

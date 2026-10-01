@@ -816,7 +816,7 @@
     list-style: none;
     margin: 0;
     padding: 0;
-    max-height: 180px;
+    max-height: 280px;
     overflow: auto;
   }
   .scrape-target-list li {
@@ -1044,10 +1044,14 @@
     <div class="panel-row">
       <span class="field-label" id="emailHint"></span>
     </div>
+    <div class="panel-row" style="margin-top:10px;">
+      <button class="btn btn-teal btn-sm" type="button" onclick="seedDefaultScrapeTargets()">⬇ Load default festive websites + Instagram list</button>
+      <span class="field-label" id="scrapeSeedHint">Research firms, newsrooms, Amazon/Flipkart IG handles</span>
+    </div>
     <div class="scrape-boxes" id="scrapeBoxes">
       <div class="scrape-box" id="websiteScrapeBox">
         <h3>Website scraping</h3>
-        <p>Track a brand/sale page URL. Matching festive/sale links are pulled into the Festive Sale tab and summarized hourly.</p>
+        <p>Research firms + company newsrooms (Redseer, Bain, Flipkart Stories, Amazon press, Meesho, etc.). Matching festive/sale links go to Festive Sale.</p>
         <div class="scrape-form">
           <input class="form-input" id="websiteScrapeUrl" type="url" placeholder="https://brand.com/sale">
           <input class="form-input" id="websiteScrapeLabel" type="text" placeholder="Label (optional)">
@@ -1058,9 +1062,9 @@
       </div>
       <div class="scrape-box" id="instagramScrapeBox">
         <h3>Instagram scraping</h3>
-        <p>Public profile handle or URL. Needs free <code>APIFY_TOKEN</code>. Posts land in Festive Sale and are included in automated briefs.</p>
+        <p>Official handles: Amazon India, Flipkart (+ Mobiles/Homes/Fashion/Beauty/Minutes/TechSpert/Video), Spoyl. Needs <code>APIFY_TOKEN</code>.</p>
         <div class="scrape-form">
-          <input class="form-input" id="instagramScrapeHandle" type="text" placeholder="@amazonindia or profile URL">
+          <input class="form-input" id="instagramScrapeHandle" type="text" placeholder="@amazondotin or profile URL">
           <input class="form-input" id="instagramScrapeLabel" type="text" placeholder="Label (optional)">
           <button class="btn btn-primary btn-sm" type="button" onclick="addInstagramScrapeTarget()">Add profile</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="runScrapeKind('instagram')">Run all IG</button>
@@ -1683,9 +1687,13 @@ async function loadScrapeTargets() {
     renderScrapeTargets(data.targets || []);
     if (hint) {
       hint.textContent = data.apify_configured
-        ? `Apify ready · actor ${data.apify_instagram_actor || "default"} · ${data.enabled_count || 0} enabled target(s)`
-        : "Apify not configured — add APIFY_TOKEN for Instagram. Website scrape still works.";
+        ? `Apify ready · actor ${data.apify_instagram_actor || "default"} · ${data.website_count || 0} sites · ${data.instagram_count || 0} IG`
+        : `Apify not set — website scrape OK (${data.website_count || 0} sites). Add APIFY_TOKEN for ${data.instagram_count || 0} IG handles.`;
       hint.style.color = data.apify_configured ? "#059669" : "#b45309";
+    }
+    const seedHint = document.getElementById("scrapeSeedHint");
+    if (seedHint && data.default_seed_count) {
+      seedHint.textContent = `${data.website_count || 0} websites · ${data.instagram_count || 0} Instagram · ${data.default_seed_count} curated defaults`;
     }
   } catch (e) {
     if (hint) hint.textContent = "Could not load scrape targets.";
@@ -1768,6 +1776,21 @@ async function runScrapeKind(kind) {
     await loadScrapeTargets();
     await loadFestiveSaleNews();
     await loadArticles();
+  } catch (e) { setStatus(e.message, true); }
+}
+
+async function seedDefaultScrapeTargets() {
+  setStatus("Loading default festive websites + Instagram handles…");
+  try {
+    const resp = await adminFetch(API + "/api/admin/scrape/seed-defaults", { method: "POST" });
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || "Seed failed");
+    const hint = document.getElementById("scrapeSeedHint");
+    if (hint) {
+      hint.textContent = `Added ${data.added || 0} new · ${data.skipped || 0} already present · ${data.total_defaults || 0} defaults`;
+    }
+    setStatus(`Defaults loaded — ${data.added || 0} new targets added.`);
+    await loadScrapeTargets();
   } catch (e) { setStatus(e.message, true); }
 }
 

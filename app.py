@@ -105,6 +105,12 @@ def on_startup():
         restore_db(database.DB_PATH)
     database.init_db()
     scrape_ingest.init_scrape_tables()
+    try:
+        seeded = scrape_ingest.seed_default_targets()
+        if seeded.get("added"):
+            print(f"[startup] seeded {seeded['added']} default scrape targets")
+    except Exception as exc:
+        print(f"[startup] scrape seed skipped: {exc}")
     if not using_persistent_disk():
         restore_db(database.DB_PATH)
 
@@ -948,6 +954,7 @@ def cron_festive_intelligence(
     ):
         raise HTTPException(401, "Unauthorized")
     try:
+        seeded = scrape_ingest.seed_default_targets()
         # Pull scrape targets first so new site/IG posts enter the brief
         scrape = scrape_ingest.run_all_enabled()
         retagged = database.reconcile_festive_sale_tags()
@@ -955,6 +962,7 @@ def cron_festive_intelligence(
         result = festive_jobs.run_festive_intelligence_and_email(force=True)
         return {
             "ok": True,
+            "seeded": seeded,
             "scrape": scrape,
             "retagged": retagged,
             **result,
@@ -1088,6 +1096,12 @@ async def admin_run_scrape_all(
     except Exception:
         kind = None
     return scrape_ingest.run_all_enabled(kind=kind)
+
+
+@app.post("/api/admin/scrape/seed-defaults")
+def admin_seed_scrape_defaults(_: None = Depends(admin_auth.require_admin)):
+    """Load curated research firms, newsrooms, and Instagram handles."""
+    return scrape_ingest.seed_default_targets()
 
 
 @app.post("/api/admin/restore-db")
