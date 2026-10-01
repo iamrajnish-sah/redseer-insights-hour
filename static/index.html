@@ -1300,6 +1300,7 @@ async function maybeAutoRefresh() {
     if (data.ran) {
       await loadFeedSummary();
       await loadArticles();
+      await loadFestiveSaleNews();
       if (adminUnlocked) {
         const added = data.total_inserted || 0;
         setStatus(

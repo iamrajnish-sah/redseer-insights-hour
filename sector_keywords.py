@@ -335,8 +335,9 @@ FESTIVE_SALE_KEYWORDS = [
 FESTIVE_SALE_PLATFORM_MARKERS = (
     "amazon", "flipkart", "myntra", "meesho", "nykaa", "ajio", "snapdeal",
     "jiomart", "shopsy", "tata cliq", "tata neu", "croma", "reliance digital",
+    "reliance retail", "vijay sales",
     "blinkit", "zepto", "instamart", "bigbasket", "swiggy", "zomato",
-    "ondc", "shopsy",
+    "ondc",
 )
 
 FESTIVE_SALE_EVENT_MARKERS = (
@@ -480,7 +481,10 @@ def _festive_sale_fallback_sector(haystack):
         return "fashion"
     if _any_phrase(haystack, ("nykaa", "pink friday")):
         return "bpc"
-    if _any_phrase(haystack, ("amazon", "flipkart", "tata cliq", "tata neu", "croma", "ondc")):
+    if _any_phrase(
+        haystack,
+        ("amazon", "flipkart", "tata cliq", "tata neu", "croma", "ondc", "reliance retail", "vijay sales"),
+    ):
         return "e_commerce"
     return "cross_sector"
 
