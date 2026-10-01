@@ -299,6 +299,9 @@
     border-top: 1px solid var(--border);
   }
   .panel-intel.is-open .intel-hub-body { display: block; }
+  .panel-festive .intel-hub-kicker { color: #b45309; }
+  .panel-festive .intel-hub-chevron { color: #d97706; }
+  .panel-festive .intel-card .intel-meta { color: #d97706; }
   .intel-hub-actions {
     display: flex;
     justify-content: flex-end;
@@ -1021,6 +1024,17 @@
     </div>
   </section>
 
+  <section class="panel panel-intel panel-festive" id="festiveHub">
+    <button type="button" class="intel-hub-toggle" id="festiveHubToggle" aria-expanded="false" onclick="toggleFestiveHub()">
+      <span class="intel-hub-kicker">Festive Sale News</span>
+      <span class="intel-hub-hint" id="festiveHubHint">BBD, Amazon, Meesho, Nykaa, Myntra & quick commerce sales</span>
+      <span class="intel-hub-chevron" aria-hidden="true">▾</span>
+    </button>
+    <div class="intel-hub-body" id="festiveHubBody">
+      <div class="intel-strip" id="festiveStrip"></div>
+    </div>
+  </section>
+
   <main>
     <div class="grid" id="grid"></div>
     <div class="load-more-wrap" id="loadMoreWrap" style="display:none;">
@@ -1237,6 +1251,7 @@ async function init() {
   await mergeDuplicateStories();
   await loadArticles();
   await loadIntelligenceBriefs();
+  await loadFestiveSaleNews();
   await maybeAutoRefresh();
 }
 
@@ -1471,6 +1486,50 @@ function toggleIntelHub() {
   const open = !hub.classList.contains("is-open");
   hub.classList.toggle("is-open", open);
   btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function toggleFestiveHub() {
+  const hub = document.getElementById("festiveHub");
+  const btn = document.getElementById("festiveHubToggle");
+  if (!hub || !btn) return;
+  const open = !hub.classList.contains("is-open");
+  hub.classList.toggle("is-open", open);
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+async function loadFestiveSaleNews() {
+  const wrap = document.getElementById("festiveStrip");
+  const hint = document.getElementById("festiveHubHint");
+  if (!wrap) return;
+  try {
+    const data = await (await fetch(API + "/api/festive-sale?days=30&limit=24")).json();
+    const articles = (data && data.articles) || [];
+    if (!articles.length) {
+      if (hint) hint.textContent = "Festive sale stories will appear here as they are published";
+      wrap.innerHTML = `<div class="intel-card">
+        <div class="intel-meta">Festive sales</div>
+        <h3>No festive sale news yet</h3>
+        <p>BBD, Amazon Great Indian Festival, Meesho, Nykaa, Myntra, Blinkit and other platform sales will show here.</p>
+      </div>`;
+      return;
+    }
+    if (hint) {
+      hint.textContent = `${articles.length} festive sale stor${articles.length === 1 ? "y" : "ies"} · click to open`;
+    }
+    wrap.innerHTML = articles.map((a) => {
+      const summary = cardSummary(a) || "Open the full story.";
+      const sector = (a.sectors && a.sectors[0]) ? (SECTORS[a.sectors[0]] || a.sectors[0]) : "Sale";
+      const href = a.resolved_url || a.url || "#";
+      return `<a class="intel-card" href="${escapeAttr(href)}" target="_blank" rel="noopener">
+        <div class="intel-meta">${escapeHtml(sector)} · ${escapeHtml(a.pub_date || "")}</div>
+        <h3>${escapeHtml(a.title || "Festive sale story")}</h3>
+        <p>${escapeHtml(summary.slice(0, 180))}</p>
+      </a>`;
+    }).join("");
+  } catch (_) {
+    wrap.innerHTML = "";
+    if (hint) hint.textContent = "BBD, Amazon, Meesho, Nykaa, Myntra & quick commerce sales";
+  }
 }
 
 async function toggleBackendPanel() {

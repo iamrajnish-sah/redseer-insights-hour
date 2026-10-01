@@ -19,7 +19,13 @@ from datetime import datetime, date, timezone
 from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
 
-from sector_keywords import match_sectors, make_summary, GOOGLE_NEWS_QUERIES, is_india_relevant
+from sector_keywords import (
+    match_sectors,
+    make_summary,
+    GOOGLE_NEWS_QUERIES,
+    FESTIVE_SALE_GOOGLE_NEWS_QUERY,
+    is_india_relevant,
+)
 
 # Browser-like UA: Business Standard (Akamai) returns 403 to custom bot UAs.
 RSS_USER_AGENT = (
@@ -100,6 +106,9 @@ def all_feeds(include_google_news=True):
     if include_google_news and os.environ.get("GOOGLE_NEWS_RSS", "true").lower() not in ("0", "false", "no"):
         for label, query in GOOGLE_NEWS_QUERIES.items():
             feeds.append((f"Google News — {label}", _google_news_url(query)))
+        feeds.append(
+            ("Google News — festive_sale", _google_news_url(FESTIVE_SALE_GOOGLE_NEWS_QUERY))
+        )
     return feeds
 
 
