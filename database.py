@@ -101,6 +101,7 @@ def init_db(light=False):
             "ALTER TABLE articles ADD COLUMN image_url TEXT",
             "ALTER TABLE articles ADD COLUMN title_key TEXT",
             "ALTER TABLE articles ADD COLUMN resolved_url TEXT",
+            "ALTER TABLE articles ADD COLUMN scrape_meta TEXT",
         ):
             try:
                 conn.execute(stmt)
@@ -373,7 +374,19 @@ def _sanitize_image_url(image_url):
     return image_url
 
 
-def _refresh_existing(conn, existing_id, fetched_at, image_url=None, resolved_url=None):
+def _refresh_existing(
+    conn,
+    existing_id,
+    fetched_at,
+    image_url=None,
+    resolved_url=None,
+    *,
+    pub_date=None,
+    title=None,
+    body=None,
+    subtitle=None,
+    scrape_meta=None,
+):
     image_url = _sanitize_image_url(image_url)
     sets = ["fetched_at = ?"]
     params = [fetched_at]
@@ -383,6 +396,21 @@ def _refresh_existing(conn, existing_id, fetched_at, image_url=None, resolved_ur
     if resolved_url:
         sets.append("resolved_url = COALESCE(resolved_url, ?)")
         params.append(resolved_url)
+    if pub_date:
+        sets.append("pub_date = ?")
+        params.append(pub_date)
+    if title:
+        sets.append("title = ?")
+        params.append(title)
+    if body is not None:
+        sets.append("body = ?")
+        params.append(body)
+    if subtitle is not None:
+        sets.append("subtitle = ?")
+        params.append(subtitle)
+    if scrape_meta is not None:
+        sets.append("scrape_meta = ?")
+        params.append(json.dumps(scrape_meta) if isinstance(scrape_meta, dict) else scrape_meta)
     params.append(existing_id)
     conn.execute(
         f"UPDATE articles SET {', '.join(sets)} WHERE id = ?",
@@ -529,7 +557,16 @@ def insert_articles(articles):
                 ).fetchone()
                 if existing:
                     _refresh_existing(
-                        conn, existing["id"], fetched_at, image_url, resolved_url
+                        conn,
+                        existing["id"],
+                        fetched_at,
+                        image_url,
+                        resolved_url,
+                        pub_date=getattr(a, "pub_date", None),
+                        title=a.title,
+                        body=getattr(a, "body", None),
+                        subtitle=getattr(a, "subtitle", None),
+                        scrape_meta=getattr(a, "scrape_meta", None) or None,
                     )
                     refreshed_ids.append(existing["id"])
                     continue
@@ -543,10 +580,24 @@ def insert_articles(articles):
                 ).fetchone()
                 if existing:
                     _refresh_existing(
-                        conn, existing["id"], fetched_at, image_url, resolved_url
+                        conn,
+                        existing["id"],
+                        fetched_at,
+                        image_url,
+                        resolved_url,
+                        pub_date=getattr(a, "pub_date", None),
+                        title=a.title,
+                        body=getattr(a, "body", None),
+                        subtitle=getattr(a, "subtitle", None),
+                        scrape_meta=getattr(a, "scrape_meta", None) or None,
                     )
                     refreshed_ids.append(existing["id"])
                     continue
+
+            scrape_meta = getattr(a, "scrape_meta", None) or None
+            scrape_meta_json = (
+                json.dumps(scrape_meta) if isinstance(scrape_meta, dict) else scrape_meta
+            )
 
             try:
                 if pre_classified:
@@ -555,11 +606,13 @@ def insert_articles(articles):
                     cur = conn.execute(
                         """INSERT INTO articles
                            (origin, source, pub_date, page, article_id, url, title, subtitle, byline, body,
-                            relevant, sectors, summary, processed, fetched_at, image_url, resolved_url, title_key)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 1, ?, ?, ?, ?)""",
+                            relevant, sectors, summary, processed, fetched_at, image_url, resolved_url, title_key,
+                            scrape_meta)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 1, ?, ?, ?, ?, ?)""",
                         (origin, a.source, a.pub_date, page, article_id, url,
                          a.title, a.subtitle, a.byline, a.body,
-                         json.dumps(sectors), summary, fetched_at, image_url, resolved_url, title_key),
+                         json.dumps(sectors), summary, fetched_at, image_url, resolved_url, title_key,
+                         scrape_meta_json),
                     )
                 else:
                     cur = conn.execute(
@@ -584,7 +637,16 @@ def insert_articles(articles):
                     ).fetchone()
                     if existing:
                         _refresh_existing(
-                            conn, existing["id"], fetched_at, image_url, resolved_url
+                            conn,
+                            existing["id"],
+                            fetched_at,
+                            image_url,
+                            resolved_url,
+                            pub_date=getattr(a, "pub_date", None),
+                            title=a.title,
+                            body=getattr(a, "body", None),
+                            subtitle=getattr(a, "subtitle", None),
+                            scrape_meta=getattr(a, "scrape_meta", None) or None,
                         )
                         refreshed_ids.append(existing["id"])
                         continue
@@ -597,7 +659,16 @@ def insert_articles(articles):
                     ).fetchone()
                     if existing:
                         _refresh_existing(
-                            conn, existing["id"], fetched_at, image_url, resolved_url
+                            conn,
+                            existing["id"],
+                            fetched_at,
+                            image_url,
+                            resolved_url,
+                            pub_date=getattr(a, "pub_date", None),
+                            title=a.title,
+                            body=getattr(a, "body", None),
+                            subtitle=getattr(a, "subtitle", None),
+                            scrape_meta=getattr(a, "scrape_meta", None) or None,
                         )
                         refreshed_ids.append(existing["id"])
         after_total = conn.execute("SELECT COUNT(*) c FROM articles").fetchone()["c"]
@@ -832,6 +903,9 @@ def get_relevant_articles(
     if origin:
         query += " AND origin = ?"
         params.append(origin)
+    else:
+        # Instagram (and website scrape) live only in their dedicated hubs — not main cards.
+        query += " AND (origin IS NULL OR origin NOT IN ('instagram', 'website_scrape'))"
     if sector:
         if sector == "cross_sector":
             query += " AND (sectors LIKE ? OR sectors LIKE ?)"
@@ -856,11 +930,41 @@ def get_relevant_articles(
     return rows
 
 
-def get_scrape_articles(origin, days=30, limit=40):
+def get_scrape_articles(
+    origin,
+    days=30,
+    limit=40,
+    start_date=None,
+    end_date=None,
+    profile_handle=None,
+):
     """Website / Instagram scrape cards for the dedicated result boxes."""
     days = max(1, min(int(days or 30), 90))
-    limit = max(1, min(int(limit or 40), 200))
-    rows = get_relevant_articles(origin=origin, days=days)
+    limit = max(1, min(int(limit or 40), 500))
+    rows = get_relevant_articles(
+        origin=origin,
+        days=days if not (start_date and end_date) else None,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    handle = (profile_handle or "").strip().lstrip("@").lower()
+    if handle:
+        filtered = []
+        for row in rows:
+            meta_raw = row["scrape_meta"] if "scrape_meta" in row.keys() else None
+            meta_handle = ""
+            if meta_raw:
+                try:
+                    meta = json.loads(meta_raw)
+                    meta_handle = (meta.get("profile_handle") or "").lower()
+                except (TypeError, json.JSONDecodeError):
+                    meta_handle = ""
+            if not meta_handle:
+                src = (row["source"] or "").lower()
+                meta_handle = src.lstrip("@").split()[0] if src else ""
+            if meta_handle == handle:
+                filtered.append(row)
+        rows = filtered
     return rows[:limit]
 
 

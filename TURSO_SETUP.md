@@ -76,8 +76,27 @@ GitHub → repo → **Settings → Secrets and variables → Actions**:
 
 | Secret | Value |
 |---|---|
-| `CRON_SECRET` | same as Vercel |
+| `CRON_SECRET` | **exactly the same string** as Vercel `CRON_SECRET` |
 | `APP_BASE_URL` | `https://redseer-insights-hour.vercel.app` |
+
+### Cron schedule (GitHub Actions)
+
+| When | Job |
+|---|---|
+| `:05` every hour | Free RSS + festive summarize |
+| `:25` every hour | Website + Instagram round-robin scrape |
+| `:20` every 3 hours | NewsAPI + GNews (metered) |
+| `:35` every 5 hours | Festive intelligence brief + email |
+
+### If hourly refresh is broken
+
+Check Actions → **Automation cron**:
+
+- **"Secrets missing"** → GitHub secrets not set (was exiting green before — now fails loudly).
+- **HTTP 401** → `CRON_SECRET` on GitHub ≠ Vercel. Paste the same value in both places, redeploy Vercel, re-run the workflow.
+- **HTTP 200** → working. Also check `/api/health` → `last_cron.hourly` should update.
+
+Open: https://redseer-insights-hour.vercel.app/api/health — look for `cron_secret_configured` and `last_cron`.
 
 Workflow `.github/workflows/automation-cron.yml` will then hit:
 

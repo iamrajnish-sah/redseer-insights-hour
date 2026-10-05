@@ -165,6 +165,20 @@ def health():
         "turso_problem": db_conn.turso_config_problem(),
         "turso_http_url": db_conn.turso_http_url() if db_conn.turso_url() else None,
         "storage": database.storage_info(),
+        "cron_secret_configured": bool((os.environ.get("CRON_SECRET") or "").strip()),
+        "apify_configured": bool(
+            (os.environ.get("APIFY_TOKEN") or os.environ.get("APIFY_API_TOKEN") or "").strip()
+        ),
+        "last_cron": {
+            "hourly": database.get_meta("last_cron_hourly"),
+            "metered": database.get_meta("last_cron_metered"),
+            "festive_intelligence": database.get_meta("last_cron_festive_intelligence"),
+            "scrape": database.get_meta("last_cron_scrape"),
+        },
+        "github_actions_note": (
+            "Hourly cron needs GitHub secrets APP_BASE_URL + CRON_SECRET matching Vercel. "
+            "401 = secret mismatch; 'Secrets missing' = GitHub secrets empty."
+        ),
     }
     if database.using_turso():
         if db_conn.LAST_ERROR:
@@ -194,6 +208,27 @@ def _row_to_dict(row):
         from rss_ingest import sanitize_google_news_image
 
         d["image_url"] = sanitize_google_news_image(d.get("image_url"))
+    raw_meta = d.get("scrape_meta")
+    if raw_meta and isinstance(raw_meta, str):
+        try:
+            d["scrape_meta"] = json.loads(raw_meta)
+        except json.JSONDecodeError:
+            d["scrape_meta"] = {}
+    elif not raw_meta:
+        d["scrape_meta"] = {}
+    if d.get("origin") == "instagram" and isinstance(d.get("scrape_meta"), dict):
+        meta = d["scrape_meta"]
+        if not meta.get("cover_image") and d.get("image_url"):
+            meta["cover_image"] = d["image_url"]
+        if not meta.get("post_url"):
+            meta["post_url"] = d.get("resolved_url") or d.get("url") or ""
+        if not meta.get("posted_by"):
+            meta["posted_by"] = d.get("source") or d.get("page") or "instagram"
+        if not meta.get("date_ist") and d.get("pub_date"):
+            meta["date_ist"] = d["pub_date"]
+        if not meta.get("content_type") and d.get("subtitle"):
+            meta["content_type"] = d["subtitle"]
+        d["scrape_meta"] = meta
     return d
 
 
@@ -818,17 +853,31 @@ def public_export_intelligence_docx(report_id: int):
 @app.get("/api/articles")
 def get_articles(sector: str = None, pub_date: str = None, search: str = None, days: int = None):
     rows = database.get_relevant_articles(pub_date=pub_date, sector=sector, search=search, days=days)
-    articles = [_row_to_dict(r) for r in rows]
+    articles = []
+    for r in rows:
+        item = _row_to_dict(r)
+        origin = (item.get("origin") or "").lower()
+        if origin in ("instagram", "website_scrape"):
+            continue
+        articles.append(item)
     return articles
 
 
 @app.get("/api/festive-sale")
 def get_festive_sale_news(days: int = 30, limit: int = 24):
-    """Public viewer strip for the Festive Sale sector."""
+    """Public viewer strip for the Festive Sale sector (never Instagram / website scrape)."""
     days = max(1, min(int(days or 30), 90))
     limit = max(1, min(int(limit or 24), 60))
     rows = database.get_relevant_articles(sector="festive_sale", days=days)
-    articles = [_row_to_dict(row) for row in rows[:limit]]
+    articles = []
+    for row in rows:
+        item = _row_to_dict(row)
+        origin = (item.get("origin") or "").lower()
+        if origin in ("instagram", "website_scrape"):
+            continue
+        articles.append(item)
+        if len(articles) >= limit:
+            break
     if len(articles) < limit:
         # Backfill older rows that match festive keywords but were tagged
         # before festive_sale became a first-class sector.
@@ -837,6 +886,9 @@ def get_festive_sale_news(days: int = 30, limit: int = 24):
             if row["id"] in seen:
                 continue
             item = _row_to_dict(row)
+            origin = (item.get("origin") or "").lower()
+            if origin in ("instagram", "website_scrape"):
+                continue
             if is_festive_sale_relevant(
                 item.get("title") or "",
                 item.get("body") or item.get("summary") or "",
@@ -881,22 +933,39 @@ def get_instagram_scrape_news(days: int = 30, limit: int = 36):
         "articles": articles,
         "excel_ready": True,
         "excel_note": (
-            "Download Excel now with the default festive columns. "
-            "Share your preferred column layout after Apify is set and we will match it."
+            "Excel uses the Flipkart IG Posts template (title row, IST date/time, Posted By, "
+            "metrics, Open post / View image hyperlinks). One sheet per Instagram handle. "
+            "Filter with ?handle=flipkart&start_date=&end_date=."
         ),
     }
 
 
 @app.get("/api/scrape/instagram/export.xlsx")
-def export_instagram_scrape_excel(days: int = 30, limit: int = 500):
-    """Excel export of Instagram scrape rows (format adjustable later)."""
-    rows = database.get_scrape_articles("instagram", days=days, limit=limit)
+def export_instagram_scrape_excel(
+    days: int = 30,
+    limit: int = 500,
+    handle: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    label: str = None,
+):
+    """Excel export of Instagram scrape rows (Flipkart-style workbook)."""
+    rows = database.get_scrape_articles(
+        "instagram",
+        days=days,
+        limit=limit,
+        start_date=start_date,
+        end_date=end_date,
+        profile_handle=handle,
+    )
     articles = [_row_to_dict(row) for row in rows]
     try:
-        data = scrape_export.instagram_articles_to_xlsx_bytes(articles)
+        data = scrape_export.instagram_articles_to_xlsx_bytes(
+            articles, handle=handle, label=label
+        )
     except RuntimeError as exc:
         raise HTTPException(500, str(exc)) from exc
-    filename = f"instagram-festive-scrape-{date.today().isoformat()}.xlsx"
+    filename = scrape_export.export_filename(handle, start_date, end_date)
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1098,6 +1167,81 @@ def cron_refresh_metered(
         raise HTTPException(500, f"Metered cron failed: {exc}") from exc
 
 
+@app.post("/api/admin/festive-insights/generate")
+async def admin_generate_festive_insights(
+    request: Request,
+    _: None = Depends(admin_auth.require_admin),
+):
+    """Generate festive_sale intelligence for a day, week, or custom date range."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body or {}
+    force = bool(body.get("force", True))
+    start_date = (body.get("start_date") or "").strip() or None
+    end_date = (body.get("end_date") or "").strip() or None
+    period = (body.get("period") or "").strip().lower()
+
+    if start_date and end_date:
+        try:
+            report = intelligence_hub.generate_or_get_report(
+                "festive_sale",
+                start_date,
+                end_date,
+                force=force,
+                generated_by="admin-festive-ui",
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(500, str(exc)) from exc
+        enriched = intelligence_hub.enrich_report_with_sources(report)
+        return {
+            "ok": True,
+            "report_id": report.get("id"),
+            "cached": bool(report.get("cached")),
+            "article_count": report.get("article_count"),
+            "start_date": start_date,
+            "end_date": end_date,
+            "period": "custom",
+            "period_label": report.get("period_label"),
+            "message": (
+                f"Festive insights ready for {start_date} → {end_date}"
+                + (" (cached)." if report.get("cached") else ".")
+            ),
+            "report": enriched,
+            "view_url": f"/intelligence?report={report['id']}",
+        }
+
+    if period not in ("daily", "weekly", "week", "day", ""):
+        raise HTTPException(400, "period must be daily or weekly, or pass start_date/end_date")
+    if period in ("", "day"):
+        period = "daily"
+    if period == "week":
+        period = "weekly"
+    result = festive_jobs.generate_festive_intelligence(
+        force=force,
+        generated_by="admin-festive-ui",
+        period=period,
+    )
+    if result.get("ok"):
+        report = intelligence_hub.get_report(result["report_id"])
+        enriched = intelligence_hub.enrich_report_with_sources(report) if report else None
+        return {
+            **result,
+            "message": (
+                f"Festive {period} insights ready"
+                + (" (cached)." if result.get("cached") else ".")
+            ),
+            "report": enriched,
+            "view_url": f"/intelligence?report={result['report_id']}",
+        }
+    reason = result.get("reason") or result.get("error") or "Generation failed"
+    status = 404 if result.get("skipped") else 500
+    raise HTTPException(status, reason)
+
+
 @app.get("/api/cron/festive-intelligence")
 def cron_festive_intelligence(
     authorization: str = Header(default=None, alias="Authorization"),
@@ -1139,14 +1283,39 @@ def cron_scrape_targets(
     user_agent: str = Header(default=None, alias="User-Agent"),
     x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
     x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
+    kind: str = None,
 ):
-    """Run all enabled website + Instagram scrape targets."""
+    """Run enabled scrape targets. kind=website|instagram|None(all, websites then IG)."""
     if not _cron_allowed(
         authorization, user_agent, x_vercel_cron_schedule, x_admin_password
     ):
-        raise HTTPException(401, "Unauthorized")
+        raise HTTPException(
+            401,
+            "Unauthorized — set the same CRON_SECRET on Vercel and GitHub Actions secrets.",
+        )
     try:
-        return {"ok": True, **scrape_ingest.run_all_enabled()}
+        scrape_ingest.seed_default_targets()
+        kind = (kind or "").strip().lower() or None
+        if kind in ("website", "instagram"):
+            result = scrape_ingest.run_all_enabled(kind=kind)
+            marked = _mark_cron("scrape")
+            return {"ok": True, "kind": kind, "cron_marked_at": marked, **result}
+        # Default: websites first (fast), then Instagram round-robin batch.
+        websites = scrape_ingest.run_all_enabled(kind="website")
+        instagram = scrape_ingest.run_all_enabled(kind="instagram")
+        marked = _mark_cron("scrape")
+        return {
+            "ok": True,
+            "kind": "website+instagram",
+            "cron_marked_at": marked,
+            "website": websites,
+            "instagram": instagram,
+            "inserted": int(websites.get("inserted") or 0) + int(instagram.get("inserted") or 0),
+            "refreshed": int(websites.get("refreshed") or 0) + int(instagram.get("refreshed") or 0),
+            "message": (
+                f"Websites: {websites.get('message')} · Instagram: {instagram.get('message')}"
+            ),
+        }
     except Exception as exc:
         raise HTTPException(500, f"Scrape cron failed: {exc}") from exc
 

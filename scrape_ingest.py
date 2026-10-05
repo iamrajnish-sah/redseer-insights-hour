@@ -17,6 +17,9 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 from html import unescape
 from urllib.parse import urljoin, urlparse
 
@@ -80,6 +83,7 @@ class Article:
     auto_summary: str = ""
     image_url: str = None
     resolved_url: str = None
+    scrape_meta: dict = field(default_factory=dict)
 
 
 def init_scrape_tables(conn=None):
@@ -369,6 +373,241 @@ def scrape_website_target(target, max_links=None, fetch_detail=None, deadline=No
     return articles
 
 
+def _instagram_scrape_all_posts():
+    return os.environ.get("INSTAGRAM_SCRAPE_ALL", "true").lower() in ("1", "true", "yes")
+
+
+def _parse_timestamp(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return _parse_timestamp(int(text))
+    try:
+        if text.endswith("Z"):
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _ist_date_time(dt):
+    if dt is None:
+        today = datetime.now(IST)
+        return today.date().isoformat(), today.strftime("%H:%M")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(IST)
+    return local.date().isoformat(), local.strftime("%H:%M")
+
+
+def _extract_hashtags(caption, item):
+    tags = item.get("hashtags")
+    if isinstance(tags, list):
+        parts = [str(t).strip().lstrip("#") for t in tags if str(t).strip()]
+        if parts:
+            return " ".join(f"#{t}" for t in parts)
+    found = re.findall(r"#(\w+)", caption or "")
+    if found:
+        return " ".join(f"#{t}" for t in found)
+    return ""
+
+
+def _posted_by_line(item, profile_handle):
+    owner_obj = item.get("owner") if isinstance(item.get("owner"), dict) else {}
+    owner = (
+        item.get("ownerUsername")
+        or item.get("username")
+        or owner_obj.get("username")
+        or ""
+    ).strip()
+    owner_name = (
+        item.get("ownerFullName")
+        or item.get("fullName")
+        or owner_obj.get("fullName")
+        or owner_obj.get("full_name")
+        or ""
+    ).strip()
+    tagged = item.get("taggedUsers") or item.get("mentions") or item.get("firstComment") or []
+    coauthors = (
+        item.get("coauthorProducers")
+        or item.get("coAuthorProducers")
+        or item.get("collaborators")
+        or []
+    )
+    candidates = []
+    if owner and owner.lower() != profile_handle.lower():
+        label = f"{owner} ({owner_name})" if owner_name else owner
+        candidates.append(label)
+    if isinstance(coauthors, list):
+        for co in coauthors:
+            if isinstance(co, dict):
+                u = (co.get("username") or co.get("ownerUsername") or "").strip()
+                n = (co.get("fullName") or co.get("ownerFullName") or "").strip()
+                if u:
+                    candidates.append(f"{u} ({n})" if n else u)
+            elif isinstance(co, str) and co.strip():
+                candidates.append(co.strip())
+    if isinstance(tagged, list):
+        for tag in tagged[:3]:
+            if isinstance(tag, dict):
+                u = (tag.get("username") or "").strip()
+                n = (tag.get("full_name") or tag.get("fullName") or "").strip()
+                if u and u.lower() != profile_handle.lower():
+                    candidates.append(f"{u} ({n})" if n else u)
+            elif isinstance(tag, str) and tag.strip():
+                candidates.append(tag.strip().lstrip("@"))
+    caption = item.get("caption") or item.get("text") or ""
+    if isinstance(caption, dict):
+        caption = caption.get("text") or ""
+    mentions = re.findall(r"@([A-Za-z0-9._]+)", str(caption or ""))
+    for m in mentions[:2]:
+        if m.lower() != profile_handle.lower():
+            candidates.append(m)
+    if candidates:
+        return candidates[0]
+    if owner_name:
+        return f"{profile_handle} ({owner_name})"
+    return profile_handle or "instagram"
+
+
+def _paid_partnership(caption, item):
+    if item.get("isSponsored") or item.get("paidPartnership") or item.get("isPaidPartnership"):
+        return "Yes"
+    cap = (caption or "").lower()
+    if "#collab" in cap or "paid partnership" in cap or "#ad" in cap:
+        return "Yes"
+    return "No"
+
+
+def _infer_content_type(caption, item, profile_handle, pinned, is_repost):
+    cap = (caption or "").lower()
+    if pinned and any(x in cap for x in ("big billion", "bbd", "launch", "yahaan")):
+        return "Brand film - main launch (pinned)"
+    if any(x in cap for x in ("#collab", "collab")) or item.get("coauthorProducers"):
+        return "Brand film - celebrity collab"
+    suffix = " (repost)" if is_repost else ""
+    category_rules = [
+        ("Premium smartphones", ("smartphone", "iphone", "galaxy", "pixel", "oneplus", "mobile")),
+        ("Laptops", ("laptop", "macbook", "notebook", "chromebook")),
+        ("Camera phones", ("camera phone", "camera", "photography", "megapixel")),
+        ("Beauty & skincare", ("beauty", "skincare", "makeup", "serum", "lipstick")),
+        ("Fashion", ("fashion", "outfit", "wardrobe", "ethnic wear")),
+        ("TVs", (" tv", "television", "oled", "qled")),
+        ("Earbuds", ("earbud", "earphone", "headphone", "tws")),
+        ("Sneakers", ("sneaker", "shoe", "footwear")),
+    ]
+    for label, keywords in category_rules:
+        if any(k in cap for k in keywords):
+            return f"Category - {label}{suffix}"
+    post_type = (item.get("type") or item.get("productType") or "").lower()
+    if post_type in ("video", "reel", "clips"):
+        return f"Brand film{suffix}" if not suffix else f"Category - Video{suffix}"
+    if "delivery" in cap or "blinkit" in cap or "minutes" in cap:
+        return "Brand - Delivery partner humour"
+    return f"Category - General{suffix}" if is_repost else "Brand - Social post"
+
+
+def _instagram_item_to_article(item, handle, label, sector):
+    caption_raw = item.get("caption") or item.get("text") or item.get("alt") or ""
+    if isinstance(caption_raw, dict):
+        caption_raw = caption_raw.get("text") or ""
+    caption = _clean_text(str(caption_raw))
+    short = caption[:120] + ("…" if len(caption) > 120 else "")
+    title = short or f"Instagram post from @{handle}"
+    post_url = (
+        item.get("url")
+        or item.get("postUrl")
+        or item.get("link")
+    )
+    if not post_url and item.get("shortCode"):
+        post_url = f"https://www.instagram.com/p/{item['shortCode']}/"
+    if not post_url:
+        post_url = _instagram_url(handle)
+    image = (
+        item.get("displayUrl")
+        or item.get("imageUrl")
+        or item.get("thumbnailUrl")
+    )
+    if not image:
+        images = item.get("images")
+        if isinstance(images, list) and images:
+            image = images[0]
+    timestamp = (
+        item.get("timestamp")
+        or item.get("takenAt")
+        or item.get("takenAtTimestamp")
+        or item.get("time")
+    )
+    dt = _parse_timestamp(timestamp)
+    pub_date, time_ist = _ist_date_time(dt)
+    owner = (item.get("ownerUsername") or item.get("username") or handle).strip()
+    is_repost = owner.lower() != handle.lower()
+    pinned = bool(item.get("isPinned") or item.get("pinned"))
+    likes = (
+        item.get("likesCount")
+        or item.get("likeCount")
+        or item.get("likes")
+        or 0
+    )
+    comments = item.get("commentsCount") or item.get("commentCount") or item.get("comments") or 0
+    views = item.get("videoViewCount") or item.get("viewCount") or item.get("views") or ""
+    plays = item.get("videoPlayCount") or item.get("playCount") or item.get("plays") or ""
+    duration = item.get("videoDuration") or item.get("duration") or item.get("videoDurationSec")
+    if duration is None and item.get("videoDurationMs"):
+        try:
+            duration = float(item["videoDurationMs"]) / 1000.0
+        except (TypeError, ValueError):
+            duration = None
+    hashtags = _extract_hashtags(caption, item)
+    posted_by = _posted_by_line(item, handle)
+    paid = _paid_partnership(caption, item)
+    content_type = _infer_content_type(caption, item, handle, pinned, is_repost)
+    scrape_meta = {
+        "profile_handle": handle,
+        "profile_label": label,
+        "date_ist": pub_date,
+        "time_ist": time_ist,
+        "posted_by": posted_by,
+        "paid_partnership": paid,
+        "pinned": "Yes" if pinned else "No",
+        "content_type": content_type,
+        "hashtags": hashtags,
+        "duration_sec": duration if duration not in ("", None) else "",
+        "likes": likes,
+        "comments": comments,
+        "views": views if views not in ("", None) else "",
+        "plays": plays if plays not in ("", None) else "",
+        "post_url": post_url,
+        "cover_image": image if isinstance(image, str) else "",
+    }
+    sectors = [sector] if sector else []
+    return Article(
+        source=label,
+        pub_date=pub_date,
+        title=title[:300],
+        subtitle=content_type[:200],
+        body=caption[:8000],
+        origin="instagram",
+        url=post_url,
+        resolved_url=post_url,
+        image_url=image if isinstance(image, str) else None,
+        page=handle,
+        article_id=str(item.get("id") or item.get("shortCode") or "") or None,
+        sectors=sectors,
+        pre_classified=True,
+        auto_summary=make_summary(title, caption),
+        scrape_meta=scrape_meta,
+    )
+
+
 def _apify_run_sync(actor_id, payload, wait_secs=90):
     token = apify_token()
     if not token:
@@ -416,7 +655,7 @@ def scrape_instagram_target(target, max_posts=None):
             "Instagram scraping needs APIFY_TOKEN. Add a free Apify token in env, "
             "then re-run. Website scraping works without Apify."
         )
-    max_posts = int(max_posts or os.environ.get("INSTAGRAM_SCRAPE_MAX_POSTS", "10"))
+    max_posts = int(max_posts or os.environ.get("INSTAGRAM_SCRAPE_MAX_POSTS", "30"))
     handle = target.get("handle") or _normalize_handle(target.get("url"))
     profile_url = _instagram_url(handle)
     actor = apify_instagram_actor()
@@ -431,73 +670,53 @@ def scrape_instagram_target(target, max_posts=None):
             "resultsType": "posts",
             "resultsLimit": max_posts,
             "searchLimit": max_posts,
+            "addParentData": False,
         }
-    items = _apify_run_sync(actor, payload, wait_secs=int(os.environ.get("APIFY_WAIT_SECS", "100")))
+    items = _apify_run_sync(actor, payload, wait_secs=int(os.environ.get("APIFY_WAIT_SECS", "120")))
     articles = []
-    today = date.today().isoformat()
-    sector = target.get("sector") or "festive_sale"
+    sector = (target.get("sector") or "").strip()
+    # Keep IG posts out of the Festive Sale news strip — they only appear in the Instagram hub.
+    if sector == "festive_sale":
+        sector = "instagram_monitoring"
     label = target.get("label") or f"@{handle}"
-    for item in items[:max_posts]:
-        caption = (
+    scrape_all = _instagram_scrape_all_posts()
+    for item in items[: max_posts * 3 if not scrape_all else max_posts]:
+        if not isinstance(item, dict):
+            continue
+        # Skip bare profile rows from Apify (no post body / media).
+        if not (
             item.get("caption")
             or item.get("text")
-            or item.get("alt")
-            or ""
-        )
-        if isinstance(caption, dict):
-            caption = caption.get("text") or ""
-        caption = _clean_text(str(caption))
-        short = caption[:120] + ("…" if len(caption) > 120 else "")
-        title = short or f"Instagram post from @{handle}"
-        post_url = (
-            item.get("url")
-            or item.get("postUrl")
-            or item.get("link")
-            or profile_url
-        )
-        image = (
-            item.get("displayUrl")
+            or item.get("shortCode")
+            or item.get("url")
+            or item.get("displayUrl")
             or item.get("imageUrl")
-            or (item.get("images") or [None])[0]
-        )
-        timestamp = item.get("timestamp") or item.get("takenAt") or item.get("time")
-        pub_date = today
-        if timestamp:
-            try:
-                if isinstance(timestamp, (int, float)):
-                    pub_date = datetime.utcfromtimestamp(timestamp).date().isoformat()
-                else:
-                    pub_date = str(timestamp)[:10]
-            except (ValueError, OSError, TypeError):
-                pub_date = today
-        # Instagram: only festive/sale posts — skip lifestyle fluff
-        if not _festive_player_relevant(title, caption, post_url):
+        ):
             continue
-        sectors = ["festive_sale"]
-        for s in match_sectors(title, caption):
-            if s not in sectors and s != "cross_sector":
-                sectors.append(s)
-        articles.append(
-            Article(
-                source=label,
-                pub_date=pub_date,
-                title=title[:300],
-                body=caption[:3000],
-                origin="instagram",
-                url=post_url,
-                resolved_url=post_url,
-                image_url=image if isinstance(image, str) else None,
-                sectors=sectors,
-                pre_classified=True,
-                auto_summary=make_summary(title, caption),
-            )
-        )
+        article = _instagram_item_to_article(item, handle, label, sector)
+        if not scrape_all and not _festive_player_relevant(
+            article.title, article.body, article.url or ""
+        ):
+            continue
+        articles.append(article)
+        if len(articles) >= max_posts:
+            break
     return articles
 
 
-def _scrape_budget_seconds():
+def _scrape_budget_seconds(kind=None):
+    if kind == KIND_INSTAGRAM:
+        default = "220" if os.environ.get("VERCEL") else "300"
+        return float(os.environ.get("INSTAGRAM_SCRAPE_BUDGET_SECONDS", default))
     default = "45" if os.environ.get("VERCEL") else "90"
     return float(os.environ.get("SCRAPE_BUDGET_SECONDS", default))
+
+
+def _max_targets_per_run(kind=None):
+    if kind == KIND_INSTAGRAM:
+        # Apify is slow — rotate a few handles each run so all brands get scraped over time.
+        return max(1, int(os.environ.get("INSTAGRAM_SCRAPE_BATCH", "3")))
+    return None
 
 
 def run_target(target_id, deadline=None):
@@ -518,7 +737,11 @@ def run_target(target_id, deadline=None):
                     "skipped": True,
                     "reason": "time_budget",
                 }
-            articles = scrape_instagram_target(target)
+            # When many IG handles share a budget, keep each Apify call smaller.
+            max_posts = None
+            if deadline is not None:
+                max_posts = int(os.environ.get("INSTAGRAM_SCRAPE_MAX_POSTS_BATCH", "12"))
+            articles = scrape_instagram_target(target, max_posts=max_posts)
         else:
             raise ValueError(f"Unsupported kind: {kind}")
         inserted, ids, refreshed = database.insert_articles(articles)
@@ -528,6 +751,7 @@ def run_target(target_id, deadline=None):
             "target_id": target_id,
             "kind": kind,
             "label": target.get("label"),
+            "handle": target.get("handle"),
             "fetched": len(articles),
             "inserted": inserted,
             "refreshed": len(refreshed),
@@ -539,13 +763,41 @@ def run_target(target_id, deadline=None):
 
 
 def run_all_enabled(kind=None):
-    """Run enabled targets with a hard time budget (festive-only results)."""
+    """Run enabled targets with a hard time budget.
+
+    Instagram handles are round-robined (oldest last_run first) so every brand
+    gets scraped across cron cycles — not only the first handle in the list.
+    """
     targets = list_targets(kind=kind, enabled_only=True)
-    budget = _scrape_budget_seconds()
+    # Least-recently-run first so Flipkart Video doesn't starve other handles.
+    targets.sort(
+        key=lambda t: (
+            t.get("last_run_at") or "",
+            int(t.get("id") or 0),
+        )
+    )
+    budget = _scrape_budget_seconds(kind)
+    max_batch = _max_targets_per_run(kind)
     deadline = time.monotonic() + budget
     results = []
     stopped_early = False
+    attempted = 0
     for target in targets:
+        if max_batch is not None and attempted >= max_batch:
+            stopped_early = True
+            results.append(
+                {
+                    "ok": False,
+                    "target_id": target["id"],
+                    "kind": target["kind"],
+                    "label": target.get("label"),
+                    "handle": target.get("handle"),
+                    "skipped": True,
+                    "reason": "batch_limit",
+                    "note": "Will run next cycle (round-robin)",
+                }
+            )
+            continue
         if time.monotonic() > deadline:
             stopped_early = True
             results.append(
@@ -554,11 +806,13 @@ def run_all_enabled(kind=None):
                     "target_id": target["id"],
                     "kind": target["kind"],
                     "label": target.get("label"),
+                    "handle": target.get("handle"),
                     "skipped": True,
                     "reason": "time_budget",
                 }
             )
             continue
+        attempted += 1
         try:
             results.append(run_target(target["id"], deadline=deadline))
         except Exception as exc:
@@ -568,28 +822,38 @@ def run_all_enabled(kind=None):
                     "target_id": target["id"],
                     "kind": target["kind"],
                     "label": target.get("label"),
+                    "handle": target.get("handle"),
                     "error": str(exc)[:240],
                 }
             )
     inserted = sum(int(r.get("inserted") or 0) for r in results if r.get("ok"))
     refreshed = sum(int(r.get("refreshed") or 0) for r in results if r.get("ok"))
     fetched = sum(int(r.get("fetched") or 0) for r in results if r.get("ok"))
+    ok_labels = [r.get("label") or r.get("handle") for r in results if r.get("ok")]
     return {
         "ran": len(results),
+        "attempted": attempted,
         "ok_count": sum(1 for r in results if r.get("ok")),
+        "ok_labels": ok_labels,
         "inserted": inserted,
         "refreshed": refreshed,
         "fetched": fetched,
         "stopped_early": stopped_early,
         "budget_seconds": budget,
-        "festive_only": True,
-        "results_location": "Festive Sale tab + Festive Sale News strip",
+        "batch_limit": max_batch,
+        "festive_only": kind != KIND_INSTAGRAM,
+        "results_location": (
+            "Instagram scrape box (Excel export)"
+            if kind == KIND_INSTAGRAM
+            else "Website scrape box + Festive Sale tab"
+        ),
         "results": results,
         "apify_configured": apify_configured(),
         "message": (
-            f"Festive scrape done — {fetched} relevant items, {inserted} new, "
-            f"{refreshed} updated. Open the Festive Sale tab to view."
-            + (" (stopped early on time budget; run again for remaining sites)" if stopped_early else "")
+            f"Scrape done — attempted {attempted}/{len(targets)} targets, "
+            f"{fetched} items, {inserted} new, {refreshed} updated"
+            + (f" · ran: {', '.join(ok_labels)}" if ok_labels else "")
+            + (" · more handles next cycle (round-robin)" if stopped_early else "")
         ),
     }
 
