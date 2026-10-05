@@ -1178,7 +1178,7 @@
           <button class="btn btn-ghost btn-sm" type="button" onclick="loadInstagramScrapeNews()">↻ Refresh</button>
           <a class="btn btn-primary btn-sm" id="btnIgExcel" href="/api/scrape/instagram/export.xlsx?days=30&limit=500">⬇ Download Excel</a>
         </div>
-        <p class="scrape-meta" id="instagramExcelNote">Excel uses a default festive column layout. Share your sheet format after Apify is set and we will match it.</p>
+        <p class="scrape-meta" id="instagramExcelNote">Excel matches the Flipkart IG Posts sheet (Date/Time IST, metrics, hyperlinks). Instagram posts stay in this box only — not in main news cards.</p>
         <div class="intel-strip" id="instagramResultsStrip"></div>
       </div>
     </section>
@@ -1784,7 +1784,7 @@ async function loadInstagramScrapeNews() {
     wrap.innerHTML = renderScrapeResultCards(
       articles,
       "No Instagram scrape news yet",
-      "Set APIFY_TOKEN, load default IG handles, then Run all IG. Festive posts will appear here and in Excel."
+      "Set APIFY_TOKEN, load default IG handles, then Run all IG. All profile posts appear here and in Excel — not in the main feed."
     );
   } catch (_) {
     wrap.innerHTML = "";

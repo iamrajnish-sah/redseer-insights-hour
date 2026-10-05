@@ -194,6 +194,14 @@ def _row_to_dict(row):
         from rss_ingest import sanitize_google_news_image
 
         d["image_url"] = sanitize_google_news_image(d.get("image_url"))
+    raw_meta = d.get("scrape_meta")
+    if raw_meta and isinstance(raw_meta, str):
+        try:
+            d["scrape_meta"] = json.loads(raw_meta)
+        except json.JSONDecodeError:
+            d["scrape_meta"] = {}
+    elif not raw_meta:
+        d["scrape_meta"] = {}
     return d
 
 
@@ -881,22 +889,38 @@ def get_instagram_scrape_news(days: int = 30, limit: int = 36):
         "articles": articles,
         "excel_ready": True,
         "excel_note": (
-            "Download Excel now with the default festive columns. "
-            "Share your preferred column layout after Apify is set and we will match it."
+            "Excel matches the Flipkart IG Posts template (#, Date/Time IST, metrics, "
+            "Open post / View image links). Use ?handle=flipkart&start_date=&end_date= on download."
         ),
     }
 
 
 @app.get("/api/scrape/instagram/export.xlsx")
-def export_instagram_scrape_excel(days: int = 30, limit: int = 500):
-    """Excel export of Instagram scrape rows (format adjustable later)."""
-    rows = database.get_scrape_articles("instagram", days=days, limit=limit)
+def export_instagram_scrape_excel(
+    days: int = 30,
+    limit: int = 500,
+    handle: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    label: str = None,
+):
+    """Excel export of Instagram scrape rows (Flipkart-style workbook)."""
+    rows = database.get_scrape_articles(
+        "instagram",
+        days=days,
+        limit=limit,
+        start_date=start_date,
+        end_date=end_date,
+        profile_handle=handle,
+    )
     articles = [_row_to_dict(row) for row in rows]
     try:
-        data = scrape_export.instagram_articles_to_xlsx_bytes(articles)
+        data = scrape_export.instagram_articles_to_xlsx_bytes(
+            articles, handle=handle, label=label
+        )
     except RuntimeError as exc:
         raise HTTPException(500, str(exc)) from exc
-    filename = f"instagram-festive-scrape-{date.today().isoformat()}.xlsx"
+    filename = scrape_export.export_filename(handle, start_date, end_date)
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
