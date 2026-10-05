@@ -84,7 +84,7 @@
   <div class="top">
     <div>
       <h1 class="brand">Intelligence <em>Hub</em></h1>
-      <p class="sub">Weekly sector briefs. Anyone can read a published week. Only an admin can generate a new one.</p>
+      <p class="sub">Sector briefs for any date range you choose. Anyone can read a published brief. Only an admin can generate a new one.</p>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
       <a class="btn btn-ghost" href="/">← Dashboard</a>
@@ -93,24 +93,37 @@
   </div>
 
   <div class="panel">
-    <p class="panel-title">View weekly intelligence</p>
+    <p class="panel-title">View intelligence</p>
     <div class="filters">
       <div class="field">
         <label for="sectorSelect">Sector</label>
         <select class="select" id="sectorSelect"></select>
       </div>
       <div class="field">
-        <label for="startWeek">From week</label>
-        <select class="select" id="startWeek" onchange="onWeekChange()"></select>
+        <label for="startDate">From date</label>
+        <input class="input" type="date" id="startDate" onchange="onDateChange()">
       </div>
       <div class="field">
-        <label for="endWeek">To week</label>
-        <select class="select" id="endWeek" onchange="onWeekChange()"></select>
+        <label for="endDate">To date</label>
+        <input class="input" type="date" id="endDate" onchange="onDateChange()">
+      </div>
+      <div class="field">
+        <label for="rangePreset">Quick range</label>
+        <select class="select" id="rangePreset" onchange="applyRangePreset()">
+          <option value="">Custom calendar range</option>
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="last7">Last 7 days</option>
+          <option value="this_week">This week (Mon–Sun)</option>
+          <option value="last_week">Last week</option>
+          <option value="last14">Last 14 days</option>
+          <option value="last30">Last 30 days</option>
+        </select>
       </div>
       <button class="btn btn-teal" id="btnShow" onclick="showBrief()">Show brief</button>
     </div>
-    <div class="week-chip" id="weekChip">Select a week</div>
-    <div class="hint" id="statusHint">Pick a sector and week to read a published brief.</div>
+    <div class="week-chip" id="weekChip">Select dates</div>
+    <div class="hint" id="statusHint">Pick a sector and any from/to dates (day-to-day) to read or generate a brief.</div>
     <div class="hint" id="previewHint"></div>
   </div>
 
@@ -119,13 +132,13 @@
     <div class="filters">
       <button class="btn btn-ghost" id="btnPreview" onclick="previewArticles()">Preview articles</button>
       <button class="btn btn-primary" id="btnGenerate" onclick="generateReport(false)">Generate Intelligence</button>
-      <button class="btn btn-teal" id="btnEmailWeek" onclick="emailWeek()">Email this week</button>
+      <button class="btn btn-teal" id="btnEmailWeek" onclick="emailWeek()">Email this range</button>
     </div>
-    <div class="hint">Uses the week range above and INTELLIGENCE_GEMINI_API_KEY on the server (separate from the news Gemini key). Visitors cannot see or run this. Email this week sends published briefs to active subscribers. Monday 08:00 UTC also sends last week’s briefs automatically.</div>
+    <div class="hint">Uses the calendar dates above and INTELLIGENCE_GEMINI_API_KEY on the server (separate from the news Gemini key). Choose 1 day, a week, or any custom range.</div>
   </div>
 
   <div class="panel" id="reportPanel" style="display:none;">
-    <p class="panel-title">Weekly brief</p>
+    <p class="panel-title">Intelligence brief</p>
     <div id="reportMeta" class="muted" style="margin-bottom:8px;"></div>
     <div class="actions" id="reportActions"></div>
     <div id="reportBody"></div>
@@ -146,7 +159,7 @@
       <table>
         <thead>
           <tr>
-            <th>Sector</th><th>Week</th><th>Articles</th><th>Generated</th><th>Status</th><th></th>
+            <th>Sector</th><th>Period</th><th>Articles</th><th>Generated</th><th>Status</th><th></th>
           </tr>
         </thead>
         <tbody id="historyRows"></tbody>
@@ -257,43 +270,60 @@ function formatDay(date) {
   });
 }
 
-function weekOptionValue(monday) {
-  return isoDate(monday) + "|" + isoDate(addDays(monday, 6));
-}
-
-function parseWeekValue(value) {
-  const [start, end] = String(value || "").split("|");
-  return { start: start || "", end: end || start || "" };
-}
-
-function fillWeekSelects() {
+function todayUtc() {
   const now = new Date();
-  const todayUtc = utcDate(now.getFullYear(), now.getMonth(), now.getDate());
-  const thisMonday = mondayOf(todayUtc);
-  const startSel = document.getElementById("startWeek");
-  const endSel = document.getElementById("endWeek");
-  const html = [];
-  for (let i = 0; i < 26; i++) {
-    const monday = addDays(thisMonday, -7 * i);
-    const sunday = addDays(monday, 6);
-    const label = `${formatDay(monday)} – ${formatDay(sunday)}${i === 0 ? " · this week" : ""}`;
-    html.push(`<option value="${weekOptionValue(monday)}">${label}</option>`);
+  return utcDate(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+function fillDateInputs() {
+  const today = todayUtc();
+  const startEl = document.getElementById("startDate");
+  const endEl = document.getElementById("endDate");
+  const iso = isoDate(today);
+  startEl.value = iso;
+  endEl.value = iso;
+  startEl.max = iso;
+  endEl.max = iso;
+  onDateChange();
+}
+
+function applyRangePreset() {
+  const preset = document.getElementById("rangePreset").value;
+  if (!preset) return;
+  const today = todayUtc();
+  let start = today;
+  let end = today;
+  if (preset === "yesterday") {
+    start = addDays(today, -1);
+    end = start;
+  } else if (preset === "last7") {
+    start = addDays(today, -6);
+  } else if (preset === "this_week") {
+    start = mondayOf(today);
+    end = addDays(start, 6);
+  } else if (preset === "last_week") {
+    const thisMonday = mondayOf(today);
+    start = addDays(thisMonday, -7);
+    end = addDays(thisMonday, -1);
+  } else if (preset === "last14") {
+    start = addDays(today, -13);
+  } else if (preset === "last30") {
+    start = addDays(today, -29);
   }
-  startSel.innerHTML = html.join("");
-  endSel.innerHTML = html.join("");
-  startSel.value = weekOptionValue(thisMonday);
-  endSel.value = weekOptionValue(thisMonday);
-  onWeekChange();
+  document.getElementById("startDate").value = isoDate(start);
+  document.getElementById("endDate").value = isoDate(end);
+  onDateChange();
 }
 
 function selectedDates() {
-  const startWeek = parseWeekValue(document.getElementById("startWeek").value);
-  const endWeek = parseWeekValue(document.getElementById("endWeek").value);
-  let start_date = startWeek.start;
-  let end_date = endWeek.end;
+  let start_date = (document.getElementById("startDate").value || "").trim();
+  let end_date = (document.getElementById("endDate").value || "").trim();
   if (start_date && end_date && end_date < start_date) {
-    start_date = endWeek.start;
-    end_date = startWeek.end;
+    const tmp = start_date;
+    start_date = end_date;
+    end_date = tmp;
+    document.getElementById("startDate").value = start_date;
+    document.getElementById("endDate").value = end_date;
   }
   return { start_date, end_date };
 }
@@ -308,16 +338,19 @@ function formatPeriod(start, end) {
   return `${formatDay(s)} – ${formatDay(e)}`;
 }
 
-function onWeekChange() {
+function onDateChange() {
   const dates = selectedDates();
   const chip = document.getElementById("weekChip");
   if (!dates.start_date) {
-    chip.textContent = "Select a week";
+    chip.textContent = "Select dates";
     return;
   }
+  const days = Math.round(
+    (new Date(dates.end_date + "T00:00:00Z") - new Date(dates.start_date + "T00:00:00Z")) / 86400000
+  ) + 1;
   chip.textContent = dates.start_date === dates.end_date
-    ? formatPeriod(dates.start_date, dates.end_date)
-    : `Week range · ${formatPeriod(dates.start_date, dates.end_date)}`;
+    ? `1 day · ${formatPeriod(dates.start_date, dates.end_date)}`
+    : `${days} days · ${formatPeriod(dates.start_date, dates.end_date)}`;
 }
 
 function fillSectors(map) {
@@ -553,7 +586,7 @@ function renderReport(report) {
 async function showBrief() {
   const dates = selectedDates();
   const sector = document.getElementById("sectorSelect").value;
-  if (!dates.start_date) { showToast("Pick a week first.", true); return; }
+  if (!dates.start_date) { showToast("Pick from/to dates first.", true); return; }
   setLoading("btnShow", true);
   document.getElementById("previewHint").textContent = "";
   try {
@@ -571,17 +604,17 @@ async function showBrief() {
       currentReport = null;
       document.getElementById("previewHint").textContent =
         `No processed brief yet for ${SECTORS[sector] || sector} (${formatPeriod(dates.start_date, dates.end_date)}). An admin must generate it.`;
-      showToast("No processed intelligence for this week yet.", true);
+      showToast("No processed intelligence for this date range yet.", true);
       return;
     }
     reports[0].cached = true;
     renderReport(reports[0]);
     if (reports.length > 1) {
       document.getElementById("previewHint").textContent =
-        `Showing the latest of ${reports.length} briefs in this week range. Older ones are in History.`;
+        `Showing the latest of ${reports.length} briefs in this date range. Older ones are in History.`;
     } else {
       document.getElementById("previewHint").textContent =
-        `Published weekly brief for ${SECTORS[sector] || sector}.`;
+        `Published brief for ${SECTORS[sector] || sector}.`;
     }
   } catch (e) {
     showToast(e.message, true);
@@ -593,7 +626,7 @@ async function showBrief() {
 async function previewArticles() {
   const dates = selectedDates();
   const sector = document.getElementById("sectorSelect").value;
-  if (!dates.start_date) { showToast("Pick a week first.", true); return; }
+  if (!dates.start_date) { showToast("Pick from/to dates first.", true); return; }
   setLoading("btnPreview", true);
   try {
     const params = new URLSearchParams({
@@ -608,7 +641,7 @@ async function previewArticles() {
       `${data.used_count} unique stor${data.used_count === 1 ? "y" : "ies"} will be sent` +
       (data.capped ? ` (newest of ${data.consolidated_count} after cap ${data.article_cap})` : "") +
       ` from ${data.article_count} processed item(s) for ${SECTORS[sector] || sector}.`;
-    if (!data.article_count) showToast("No processed articles available for the selected week.", true);
+    if (!data.article_count) showToast("No processed articles available for the selected dates.", true);
   } catch (e) {
     showToast(e.message, true);
   } finally {
@@ -624,7 +657,7 @@ async function generateReport(force=false) {
   setAdminUi(true);
   const dates = selectedDates();
   const sector = document.getElementById("sectorSelect").value;
-  if (!dates.start_date) { showToast("Pick a week first.", true); return; }
+  if (!dates.start_date) { showToast("Pick from/to dates first.", true); return; }
   setLoading("btnGenerate", true);
   try {
     const resp = await adminFetch(API + "/api/admin/intelligence/generate", {
@@ -704,11 +737,11 @@ async function deleteReport(id) {
 
 async function emailWeek() {
   if (!(await ensureAdmin())) {
-    showToast("Only an admin can email weekly briefs.", true);
+    showToast("Only an admin can email briefs.", true);
     return;
   }
   const dates = selectedDates();
-  if (!dates.start_date) { showToast("Pick a week first.", true); return; }
+  if (!dates.start_date) { showToast("Pick from/to dates first.", true); return; }
   setLoading("btnEmailWeek", true);
   try {
     const resp = await adminFetch(API + "/api/admin/intelligence/email-week", {
@@ -721,7 +754,7 @@ async function emailWeek() {
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || "Weekly email failed");
-    showToast(data.sent_count ? `Sent ${data.sent_count} weekly brief email(s).` : (data.message || "No emails sent."));
+    showToast(data.sent_count ? `Sent ${data.sent_count} brief email(s).` : (data.message || "No emails sent."));
   } catch (e) {
     showToast(e.message, true);
   } finally {
@@ -730,7 +763,7 @@ async function emailWeek() {
 }
 
 async function init() {
-  fillWeekSelects();
+  fillDateInputs();
   const statusResp = await fetch(API + "/api/intelligence/status");
   const status = await statusResp.json();
   fillSectors(status.sectors || await (await fetch(API + "/api/sectors")).json());

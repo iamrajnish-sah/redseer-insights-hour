@@ -156,23 +156,39 @@ def _sort_key(article):
     return (str(d), t)
 
 
-def instagram_articles_to_xlsx_bytes(articles, *, handle=None, label=None, sheet_title=None):
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font
-        from openpyxl.utils import get_column_letter
-    except ImportError as exc:
-        raise RuntimeError(
-            "openpyxl is not installed. Add it to requirements and redeploy."
-        ) from exc
+def _article_handle(article):
+    meta = _parse_meta(article)
+    handle = (meta.get("profile_handle") or "").strip().lstrip("@")
+    if handle:
+        return handle.lower()
+    page = (article.get("page") or "").strip().lstrip("@")
+    if page:
+        return page.lower()
+    source = (article.get("source") or "").strip()
+    if source:
+        return source.lstrip("@").split()[0].lower()
+    return "instagram"
+
+
+def _write_sheet(wb, articles, *, handle=None, label=None, sheet_title=None, first=False):
+    from openpyxl.styles import Font
 
     articles = list(articles)
     articles.sort(key=_sort_key)
-
-    wb = Workbook()
-    ws = wb.active
     safe_handle = (handle or "instagram").strip().lstrip("@") or "instagram"
-    ws.title = (sheet_title or f"{safe_handle.title()} IG Posts")[:31]
+    title = (sheet_title or f"{safe_handle.title()} IG Posts")[:31]
+    if first:
+        ws = wb.active
+        ws.title = title
+    else:
+        # Avoid duplicate sheet names
+        base = title
+        n = 2
+        existing = {s.title for s in wb.worksheets}
+        while title in existing:
+            title = f"{base[:28]} {n}"[:31]
+            n += 1
+        ws = wb.create_sheet(title)
 
     title_text = _title_brand(articles, handle=handle, label=label)
     ws.merge_cells("A1:P1")
@@ -222,6 +238,51 @@ def instagram_articles_to_xlsx_bytes(articles, *, handle=None, label=None, sheet
 
     for col, width in COLUMN_WIDTHS.items():
         ws.column_dimensions[col].width = width
+    return ws
+
+
+def instagram_articles_to_xlsx_bytes(articles, *, handle=None, label=None, sheet_title=None):
+    """Build Flipkart-style workbook. One sheet per handle when exporting all brands."""
+    try:
+        from openpyxl import Workbook
+    except ImportError as exc:
+        raise RuntimeError(
+            "openpyxl is not installed. Add it to requirements and redeploy."
+        ) from exc
+
+    articles = list(articles)
+    wb = Workbook()
+
+    if handle:
+        _write_sheet(
+            wb,
+            articles,
+            handle=handle,
+            label=label,
+            sheet_title=sheet_title,
+            first=True,
+        )
+    else:
+        groups = {}
+        for article in articles:
+            key = _article_handle(article)
+            groups.setdefault(key, []).append(article)
+        if not groups:
+            _write_sheet(wb, [], handle="instagram", sheet_title="Instagram IG Posts", first=True)
+        else:
+            first = True
+            for h in sorted(groups.keys()):
+                group = groups[h]
+                meta = _parse_meta(group[0])
+                _write_sheet(
+                    wb,
+                    group,
+                    handle=h,
+                    label=meta.get("profile_label") or label,
+                    sheet_title=f"{h.title()} IG Posts",
+                    first=first,
+                )
+                first = False
 
     buffer = io.BytesIO()
     wb.save(buffer)

@@ -1,16 +1,20 @@
 # Sub-daily automation (Vercel Hobby cannot run hourly crons).
-# Required repo secrets:
+# Required repo secrets (MUST match Vercel env):
 #   APP_BASE_URL  — https://redseer-insights-hour.vercel.app  (no trailing slash)
-#   CRON_SECRET   — same value as CRON_SECRET on the Vercel app
+#   CRON_SECRET   — EXACT same value as CRON_SECRET on the Vercel app
 # Also set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN on Vercel so data survives cold starts.
+#
+# If Actions show "Secrets missing" or HTTP 401, the hourly refresh is NOT running.
+# Fix: GitHub → Settings → Secrets → set APP_BASE_URL + CRON_SECRET to match Vercel.
 
 name: Automation cron
 
 on:
   schedule:
-    - cron: "5 * * * *"
-    - cron: "20 */3 * * *"
-    - cron: "35 */5 * * *"
+    - cron: "5 * * * *"       # hourly: RSS + festive summarize
+    - cron: "25 * * * *"      # hourly: website + Instagram round-robin scrape
+    - cron: "20 */3 * * *"    # every ~3h: metered NewsAPI + GNews
+    - cron: "35 */5 * * *"    # every ~5h: festive intelligence + email
   workflow_dispatch:
     inputs:
       job:
@@ -20,9 +24,9 @@ on:
         type: choice
         options:
           - hourly
+          - scrape
           - metered
           - festive
-          - scrape
 
 jobs:
   hourly:
@@ -37,12 +41,54 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
-          test -n "${APP_BASE_URL:-}" && test -n "${CRON_SECRET:-}" || { echo "Secrets missing"; exit 0; }
-          curl -fsS -X GET \
+          if [ -z "${APP_BASE_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::Missing GitHub secrets APP_BASE_URL and/or CRON_SECRET. Set them to match Vercel (same CRON_SECRET value)."
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/cron-out.json -w "%{http_code}" -X GET \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "User-Agent: github-actions-cron" \
             --max-time 280 \
-            "${APP_BASE_URL%/}/api/cron/refresh-hourly"
+            "${APP_BASE_URL%/}/api/cron/refresh-hourly" || true)
+          echo "HTTP ${code}"
+          head -c 2000 /tmp/cron-out.json || true
+          echo
+          if [ "$code" = "401" ]; then
+            echo "::error::401 Unauthorized — CRON_SECRET in GitHub does not match Vercel CRON_SECRET. Update both to the same value and redeploy."
+            exit 1
+          fi
+          test "$code" = "200"
+
+  scrape:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '25 * * * *') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'scrape')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Website + Instagram round-robin scrape
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APP_BASE_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::Missing GitHub secrets APP_BASE_URL and/or CRON_SECRET."
+            exit 1
+          fi
+          # Websites first (fast), then Instagram-only round-robin via query.
+          code=$(curl -sS -o /tmp/cron-scrape.json -w "%{http_code}" -X GET \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "User-Agent: github-actions-cron" \
+            --max-time 280 \
+            "${APP_BASE_URL%/}/api/cron/scrape-targets" || true)
+          echo "HTTP ${code}"
+          head -c 2000 /tmp/cron-scrape.json || true
+          echo
+          if [ "$code" = "401" ]; then
+            echo "::error::401 Unauthorized — sync CRON_SECRET between GitHub Actions and Vercel."
+            exit 1
+          fi
+          test "$code" = "200"
 
   metered:
     if: >-
@@ -56,12 +102,23 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
-          test -n "${APP_BASE_URL:-}" && test -n "${CRON_SECRET:-}" || { echo "Secrets missing"; exit 0; }
-          curl -fsS -X GET \
+          if [ -z "${APP_BASE_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::Missing GitHub secrets APP_BASE_URL and/or CRON_SECRET."
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/cron-out.json -w "%{http_code}" -X GET \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "User-Agent: github-actions-cron" \
             --max-time 280 \
-            "${APP_BASE_URL%/}/api/cron/refresh-metered"
+            "${APP_BASE_URL%/}/api/cron/refresh-metered" || true)
+          echo "HTTP ${code}"
+          head -c 2000 /tmp/cron-out.json || true
+          echo
+          if [ "$code" = "401" ]; then
+            echo "::error::401 Unauthorized — sync CRON_SECRET between GitHub Actions and Vercel."
+            exit 1
+          fi
+          test "$code" = "200"
 
   festive:
     if: >-
@@ -75,26 +132,20 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
-          test -n "${APP_BASE_URL:-}" && test -n "${CRON_SECRET:-}" || { echo "Secrets missing"; exit 0; }
-          curl -fsS -X GET \
+          if [ -z "${APP_BASE_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::Missing GitHub secrets APP_BASE_URL and/or CRON_SECRET."
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/cron-out.json -w "%{http_code}" -X GET \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "User-Agent: github-actions-cron" \
             --max-time 280 \
-            "${APP_BASE_URL%/}/api/cron/festive-intelligence"
-
-  scrape:
-    if: github.event_name == 'workflow_dispatch' && inputs.job == 'scrape'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Scrape targets only
-        env:
-          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
-        run: |
-          set -euo pipefail
-          test -n "${APP_BASE_URL:-}" && test -n "${CRON_SECRET:-}" || { echo "Secrets missing"; exit 0; }
-          curl -fsS -X GET \
-            -H "Authorization: Bearer ${CRON_SECRET}" \
-            -H "User-Agent: github-actions-cron" \
-            --max-time 280 \
-            "${APP_BASE_URL%/}/api/cron/scrape-targets"
+            "${APP_BASE_URL%/}/api/cron/festive-intelligence" || true)
+          echo "HTTP ${code}"
+          head -c 2000 /tmp/cron-out.json || true
+          echo
+          if [ "$code" = "401" ]; then
+            echo "::error::401 Unauthorized — sync CRON_SECRET between GitHub Actions and Vercel."
+            exit 1
+          fi
+          test "$code" = "200"

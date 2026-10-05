@@ -1212,19 +1212,19 @@
     </div>
   </section>
 
-  <section class="panel panel-intel panel-festive" id="festiveHub">
-    <button type="button" class="intel-hub-toggle" id="festiveHubToggle" aria-expanded="false" onclick="toggleFestiveHub()">
+  <section class="panel panel-intel panel-festive is-open" id="festiveHub">
+    <button type="button" class="intel-hub-toggle" id="festiveHubToggle" aria-expanded="true" onclick="toggleFestiveHub()">
       <span class="intel-hub-kicker">Festive Sale News</span>
-      <span class="intel-hub-hint" id="festiveHubHint">BBD, Amazon, Meesho, Nykaa, Myntra & quick commerce sales</span>
+      <span class="intel-hub-hint" id="festiveHubHint">BBD, Amazon, Meesho, Nykaa, Myntra & quick commerce sales · daily / weekly insights</span>
       <span class="intel-hub-chevron" aria-hidden="true">▾</span>
     </button>
     <div class="intel-hub-body" id="festiveHubBody">
       <div class="scrape-result-actions festive-insight-actions">
         <button class="btn btn-primary btn-sm" type="button" id="btnFestiveDailyInsights" onclick="generateFestiveInsights('daily')">✦ Daily insights</button>
         <button class="btn btn-teal btn-sm" type="button" id="btnFestiveWeeklyInsights" onclick="generateFestiveInsights('weekly')">✦ Weekly insights</button>
-        <a class="btn btn-ghost btn-sm" href="/intelligence">Open Intelligence Hub</a>
+        <a class="btn btn-ghost btn-sm" href="/intelligence">Calendar date range →</a>
       </div>
-      <p class="scrape-meta" id="festiveInsightsNote">Generate a festive sale brief from news only (Instagram posts are never included).</p>
+      <p class="scrape-meta" id="festiveInsightsNote">Daily / weekly shortcuts here, or open Intelligence Hub and pick any from/to dates on the calendar.</p>
       <div class="intel-strip" id="festiveStrip"></div>
     </div>
   </section>
@@ -1255,7 +1255,7 @@
           <button class="btn btn-ghost btn-sm" type="button" onclick="loadInstagramScrapeNews()">↻ Refresh</button>
           <a class="btn btn-primary btn-sm" id="btnIgExcel" href="/api/scrape/instagram/export.xlsx?days=30&limit=500">⬇ Download Excel</a>
         </div>
-        <p class="scrape-meta" id="instagramExcelNote">Excel matches the Flipkart IG Posts sheet (Date/Time IST, metrics, hyperlinks). Instagram posts stay in this box only — not in main news cards.</p>
+        <p class="scrape-meta" id="instagramExcelNote">Excel matches Flipkart IG Posts layout (one sheet per handle: #, Date/Time IST, Posted By, metrics, Open post / View image). Run all IG repeatedly so every handle rotates in.</p>
         <div class="intel-strip" id="instagramResultsStrip"></div>
       </div>
     </section>

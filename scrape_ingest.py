@@ -704,9 +704,19 @@ def scrape_instagram_target(target, max_posts=None):
     return articles
 
 
-def _scrape_budget_seconds():
+def _scrape_budget_seconds(kind=None):
+    if kind == KIND_INSTAGRAM:
+        default = "220" if os.environ.get("VERCEL") else "300"
+        return float(os.environ.get("INSTAGRAM_SCRAPE_BUDGET_SECONDS", default))
     default = "45" if os.environ.get("VERCEL") else "90"
     return float(os.environ.get("SCRAPE_BUDGET_SECONDS", default))
+
+
+def _max_targets_per_run(kind=None):
+    if kind == KIND_INSTAGRAM:
+        # Apify is slow — rotate a few handles each run so all brands get scraped over time.
+        return max(1, int(os.environ.get("INSTAGRAM_SCRAPE_BATCH", "3")))
+    return None
 
 
 def run_target(target_id, deadline=None):
@@ -727,7 +737,11 @@ def run_target(target_id, deadline=None):
                     "skipped": True,
                     "reason": "time_budget",
                 }
-            articles = scrape_instagram_target(target)
+            # When many IG handles share a budget, keep each Apify call smaller.
+            max_posts = None
+            if deadline is not None:
+                max_posts = int(os.environ.get("INSTAGRAM_SCRAPE_MAX_POSTS_BATCH", "12"))
+            articles = scrape_instagram_target(target, max_posts=max_posts)
         else:
             raise ValueError(f"Unsupported kind: {kind}")
         inserted, ids, refreshed = database.insert_articles(articles)
@@ -737,6 +751,7 @@ def run_target(target_id, deadline=None):
             "target_id": target_id,
             "kind": kind,
             "label": target.get("label"),
+            "handle": target.get("handle"),
             "fetched": len(articles),
             "inserted": inserted,
             "refreshed": len(refreshed),
@@ -748,13 +763,41 @@ def run_target(target_id, deadline=None):
 
 
 def run_all_enabled(kind=None):
-    """Run enabled targets with a hard time budget (festive-only results)."""
+    """Run enabled targets with a hard time budget.
+
+    Instagram handles are round-robined (oldest last_run first) so every brand
+    gets scraped across cron cycles — not only the first handle in the list.
+    """
     targets = list_targets(kind=kind, enabled_only=True)
-    budget = _scrape_budget_seconds()
+    # Least-recently-run first so Flipkart Video doesn't starve other handles.
+    targets.sort(
+        key=lambda t: (
+            t.get("last_run_at") or "",
+            int(t.get("id") or 0),
+        )
+    )
+    budget = _scrape_budget_seconds(kind)
+    max_batch = _max_targets_per_run(kind)
     deadline = time.monotonic() + budget
     results = []
     stopped_early = False
+    attempted = 0
     for target in targets:
+        if max_batch is not None and attempted >= max_batch:
+            stopped_early = True
+            results.append(
+                {
+                    "ok": False,
+                    "target_id": target["id"],
+                    "kind": target["kind"],
+                    "label": target.get("label"),
+                    "handle": target.get("handle"),
+                    "skipped": True,
+                    "reason": "batch_limit",
+                    "note": "Will run next cycle (round-robin)",
+                }
+            )
+            continue
         if time.monotonic() > deadline:
             stopped_early = True
             results.append(
@@ -763,11 +806,13 @@ def run_all_enabled(kind=None):
                     "target_id": target["id"],
                     "kind": target["kind"],
                     "label": target.get("label"),
+                    "handle": target.get("handle"),
                     "skipped": True,
                     "reason": "time_budget",
                 }
             )
             continue
+        attempted += 1
         try:
             results.append(run_target(target["id"], deadline=deadline))
         except Exception as exc:
@@ -777,20 +822,25 @@ def run_all_enabled(kind=None):
                     "target_id": target["id"],
                     "kind": target["kind"],
                     "label": target.get("label"),
+                    "handle": target.get("handle"),
                     "error": str(exc)[:240],
                 }
             )
     inserted = sum(int(r.get("inserted") or 0) for r in results if r.get("ok"))
     refreshed = sum(int(r.get("refreshed") or 0) for r in results if r.get("ok"))
     fetched = sum(int(r.get("fetched") or 0) for r in results if r.get("ok"))
+    ok_labels = [r.get("label") or r.get("handle") for r in results if r.get("ok")]
     return {
         "ran": len(results),
+        "attempted": attempted,
         "ok_count": sum(1 for r in results if r.get("ok")),
+        "ok_labels": ok_labels,
         "inserted": inserted,
         "refreshed": refreshed,
         "fetched": fetched,
         "stopped_early": stopped_early,
         "budget_seconds": budget,
+        "batch_limit": max_batch,
         "festive_only": kind != KIND_INSTAGRAM,
         "results_location": (
             "Instagram scrape box (Excel export)"
@@ -800,9 +850,10 @@ def run_all_enabled(kind=None):
         "results": results,
         "apify_configured": apify_configured(),
         "message": (
-            f"Festive scrape done — {fetched} relevant items, {inserted} new, "
-            f"{refreshed} updated. Open the Festive Sale tab to view."
-            + (" (stopped early on time budget; run again for remaining sites)" if stopped_early else "")
+            f"Scrape done — attempted {attempted}/{len(targets)} targets, "
+            f"{fetched} items, {inserted} new, {refreshed} updated"
+            + (f" · ran: {', '.join(ok_labels)}" if ok_labels else "")
+            + (" · more handles next cycle (round-robin)" if stopped_early else "")
         ),
     }
 

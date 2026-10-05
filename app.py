@@ -165,6 +165,20 @@ def health():
         "turso_problem": db_conn.turso_config_problem(),
         "turso_http_url": db_conn.turso_http_url() if db_conn.turso_url() else None,
         "storage": database.storage_info(),
+        "cron_secret_configured": bool((os.environ.get("CRON_SECRET") or "").strip()),
+        "apify_configured": bool(
+            (os.environ.get("APIFY_TOKEN") or os.environ.get("APIFY_API_TOKEN") or "").strip()
+        ),
+        "last_cron": {
+            "hourly": database.get_meta("last_cron_hourly"),
+            "metered": database.get_meta("last_cron_metered"),
+            "festive_intelligence": database.get_meta("last_cron_festive_intelligence"),
+            "scrape": database.get_meta("last_cron_scrape"),
+        },
+        "github_actions_note": (
+            "Hourly cron needs GitHub secrets APP_BASE_URL + CRON_SECRET matching Vercel. "
+            "401 = secret mismatch; 'Secrets missing' = GitHub secrets empty."
+        ),
     }
     if database.using_turso():
         if db_conn.LAST_ERROR:
@@ -919,8 +933,9 @@ def get_instagram_scrape_news(days: int = 30, limit: int = 36):
         "articles": articles,
         "excel_ready": True,
         "excel_note": (
-            "Excel matches the Flipkart IG Posts template (#, Date/Time IST, metrics, "
-            "Open post / View image links). Use ?handle=flipkart&start_date=&end_date= on download."
+            "Excel uses the Flipkart IG Posts template (title row, IST date/time, Posted By, "
+            "metrics, Open post / View image hyperlinks). One sheet per Instagram handle. "
+            "Filter with ?handle=flipkart&start_date=&end_date=."
         ),
     }
 
@@ -1157,19 +1172,54 @@ async def admin_generate_festive_insights(
     request: Request,
     _: None = Depends(admin_auth.require_admin),
 ):
-    """Generate festive_sale intelligence for today (daily) or this ISO week (weekly)."""
+    """Generate festive_sale intelligence for a day, week, or custom date range."""
     try:
         body = await request.json()
     except Exception:
         body = {}
-    period = ((body or {}).get("period") or "daily").strip().lower()
-    if period not in ("daily", "weekly", "week", "day"):
-        raise HTTPException(400, "period must be daily or weekly")
-    if period == "day":
+    body = body or {}
+    force = bool(body.get("force", True))
+    start_date = (body.get("start_date") or "").strip() or None
+    end_date = (body.get("end_date") or "").strip() or None
+    period = (body.get("period") or "").strip().lower()
+
+    if start_date and end_date:
+        try:
+            report = intelligence_hub.generate_or_get_report(
+                "festive_sale",
+                start_date,
+                end_date,
+                force=force,
+                generated_by="admin-festive-ui",
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(500, str(exc)) from exc
+        enriched = intelligence_hub.enrich_report_with_sources(report)
+        return {
+            "ok": True,
+            "report_id": report.get("id"),
+            "cached": bool(report.get("cached")),
+            "article_count": report.get("article_count"),
+            "start_date": start_date,
+            "end_date": end_date,
+            "period": "custom",
+            "period_label": report.get("period_label"),
+            "message": (
+                f"Festive insights ready for {start_date} → {end_date}"
+                + (" (cached)." if report.get("cached") else ".")
+            ),
+            "report": enriched,
+            "view_url": f"/intelligence?report={report['id']}",
+        }
+
+    if period not in ("daily", "weekly", "week", "day", ""):
+        raise HTTPException(400, "period must be daily or weekly, or pass start_date/end_date")
+    if period in ("", "day"):
         period = "daily"
     if period == "week":
         period = "weekly"
-    force = bool((body or {}).get("force", True))
     result = festive_jobs.generate_festive_intelligence(
         force=force,
         generated_by="admin-festive-ui",
@@ -1233,14 +1283,39 @@ def cron_scrape_targets(
     user_agent: str = Header(default=None, alias="User-Agent"),
     x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
     x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
+    kind: str = None,
 ):
-    """Run all enabled website + Instagram scrape targets."""
+    """Run enabled scrape targets. kind=website|instagram|None(all, websites then IG)."""
     if not _cron_allowed(
         authorization, user_agent, x_vercel_cron_schedule, x_admin_password
     ):
-        raise HTTPException(401, "Unauthorized")
+        raise HTTPException(
+            401,
+            "Unauthorized — set the same CRON_SECRET on Vercel and GitHub Actions secrets.",
+        )
     try:
-        return {"ok": True, **scrape_ingest.run_all_enabled()}
+        scrape_ingest.seed_default_targets()
+        kind = (kind or "").strip().lower() or None
+        if kind in ("website", "instagram"):
+            result = scrape_ingest.run_all_enabled(kind=kind)
+            marked = _mark_cron("scrape")
+            return {"ok": True, "kind": kind, "cron_marked_at": marked, **result}
+        # Default: websites first (fast), then Instagram round-robin batch.
+        websites = scrape_ingest.run_all_enabled(kind="website")
+        instagram = scrape_ingest.run_all_enabled(kind="instagram")
+        marked = _mark_cron("scrape")
+        return {
+            "ok": True,
+            "kind": "website+instagram",
+            "cron_marked_at": marked,
+            "website": websites,
+            "instagram": instagram,
+            "inserted": int(websites.get("inserted") or 0) + int(instagram.get("inserted") or 0),
+            "refreshed": int(websites.get("refreshed") or 0) + int(instagram.get("refreshed") or 0),
+            "message": (
+                f"Websites: {websites.get('message')} · Instagram: {instagram.get('message')}"
+            ),
+        }
     except Exception as exc:
         raise HTTPException(500, f"Scrape cron failed: {exc}") from exc
 
