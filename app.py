@@ -79,10 +79,26 @@ async def allow_head_requests(request: Request, call_next):
     return Response(status_code=response.status_code, headers=headers)
 
 
+def _normalize_secret(value):
+    """Trim whitespace/quotes people often paste into env UIs by mistake."""
+    text = (value or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+        text = text[1:-1].strip()
+    if text.lower().startswith("bearer "):
+        text = text[7:].strip()
+    return text
+
+
 def _cron_allowed(authorization, user_agent, cron_schedule, admin_password):
     """Allow Vercel Cron, CRON_SECRET bearer, or admin password. Open only in local dev."""
-    secret = (os.environ.get("CRON_SECRET") or "").strip()
-    if secret and (authorization or "") == f"Bearer {secret}":
+    secret = _normalize_secret(os.environ.get("CRON_SECRET"))
+    auth = (authorization or "").strip()
+    token = ""
+    if auth.lower().startswith("bearer "):
+        token = _normalize_secret(auth[7:])
+    elif auth:
+        token = _normalize_secret(auth)
+    if secret and token and secret == token:
         return True
     if admin_auth.admin_password_configured() and admin_auth.verify_admin_password(admin_password):
         return True
@@ -98,6 +114,40 @@ def _cron_allowed(authorization, user_agent, cron_schedule, admin_password):
     if hosted:
         return False
     return True
+
+
+@app.get("/api/cron/ping")
+def cron_ping(
+    authorization: str = Header(default=None, alias="Authorization"),
+    user_agent: str = Header(default=None, alias="User-Agent"),
+    x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
+    x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
+):
+    """Auth check for GitHub Actions — does not refresh data. Use to verify CRON_SECRET match."""
+    import hashlib
+
+    secret = _normalize_secret(os.environ.get("CRON_SECRET"))
+    allowed = _cron_allowed(
+        authorization, user_agent, x_vercel_cron_schedule, x_admin_password
+    )
+    fingerprint = (
+        hashlib.sha256(secret.encode("utf-8")).hexdigest()[:10] if secret else None
+    )
+    if not allowed:
+        raise HTTPException(
+            401,
+            "Unauthorized — GitHub CRON_SECRET does not match Vercel CRON_SECRET. "
+            "Open Vercel → Settings → Environment Variables → CRON_SECRET → copy value → "
+            "paste into GitHub → Settings → Secrets → Actions → CRON_SECRET (update).",
+        )
+    return {
+        "ok": True,
+        "authorized": True,
+        "cron_secret_configured": bool(secret),
+        "cron_secret_length": len(secret) if secret else 0,
+        "cron_secret_fingerprint": fingerprint,
+        "message": "CRON_SECRET matches. Hourly automation can call this app.",
+    }
 
 
 # Set during startup if Turso/init fails — site still serves pages.

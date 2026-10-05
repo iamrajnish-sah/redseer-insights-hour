@@ -45,6 +45,22 @@ jobs:
             echo "::error::Missing GitHub secrets APP_BASE_URL and/or CRON_SECRET. Set them to match Vercel (same CRON_SECRET value)."
             exit 1
           fi
+          # Trim accidental whitespace/newlines from secret paste
+          APP_BASE_URL=$(printf '%s' "$APP_BASE_URL" | tr -d '\r' | sed 's/[[:space:]]*$//')
+          CRON_SECRET=$(printf '%s' "$CRON_SECRET" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//;s/^'"'"'//;s/'"'"'$//')
+          echo "APP_BASE_URL length=${#APP_BASE_URL} CRON_SECRET length=${#CRON_SECRET}"
+          ping_code=$(curl -sS -o /tmp/cron-ping.json -w "%{http_code}" -X GET \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "User-Agent: github-actions-cron" \
+            --max-time 60 \
+            "${APP_BASE_URL%/}/api/cron/ping" || true)
+          echo "ping HTTP ${ping_code}"
+          head -c 500 /tmp/cron-ping.json || true
+          echo
+          if [ "$ping_code" = "401" ]; then
+            echo "::error::401 — GitHub CRON_SECRET ≠ Vercel CRON_SECRET. Copy the exact value from Vercel Environment Variables into GitHub Actions secret CRON_SECRET."
+            exit 1
+          fi
           code=$(curl -sS -o /tmp/cron-out.json -w "%{http_code}" -X GET \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "User-Agent: github-actions-cron" \
