@@ -1393,18 +1393,35 @@ let highlightTimer = null;
 async function init() {
   document.getElementById("todayDate").textContent = new Date().toDateString();
   initDatePicker();
-  SECTORS = await (await fetch(API + "/api/sectors")).json();
+  try {
+    SECTORS = await (await fetch(API + "/api/sectors")).json();
+  } catch (_) {
+    SECTORS = SECTORS || {};
+  }
   buildTabs();
   syncDateFilterButtons();
   await restoreAdminSession();
-  await loadFeedSummary();
-  await mergeDuplicateStories();
-  await loadArticles();
-  await loadIntelligenceBriefs();
-  await loadFestiveSaleNews();
-  await loadWebsiteScrapeNews();
-  await loadInstagramScrapeNews();
-  await maybeAutoRefresh();
+
+  // Show the feed immediately — never block on summary / dedupe / refresh.
+  try {
+    await loadArticles();
+  } catch (e) {
+    const el = document.getElementById("feedCount");
+    if (el) el.textContent = "Could not load articles. Click Refresh or reload.";
+    console.error(e);
+  }
+
+  // Background work after the feed is visible
+  Promise.allSettled([
+    loadFeedSummary().then(() => renderArticles()),
+    mergeDuplicateStories(),
+    loadIntelligenceBriefs(),
+    loadFestiveSaleNews(),
+    loadWebsiteScrapeNews(),
+    loadInstagramScrapeNews(),
+  ]).finally(() => {
+    maybeAutoRefresh();
+  });
 }
 
 async function restoreAdminSession() {
@@ -1440,13 +1457,18 @@ async function loadFeedSummary() {
 }
 
 async function maybeAutoRefresh() {
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 25000) : null;
   try {
-    const status = await (await fetch(API + "/api/auto-refresh/status")).json();
+    const status = await (await fetch(API + "/api/auto-refresh/status", controller ? { signal: controller.signal } : undefined)).json();
     if (!status.stale && status.article_count > 0) return;
     if (adminUnlocked) {
       setStatus("Fetching latest sector news — this may take a minute ...");
     }
-    const resp = await fetch(API + "/api/auto-refresh", { method: "POST" });
+    const resp = await fetch(API + "/api/auto-refresh", {
+      method: "POST",
+      ...(controller ? { signal: controller.signal } : {}),
+    });
     const data = await readJson(resp);
     if (!resp.ok) throw new Error(data.detail || "Auto refresh failed");
     if (data.ran) {
@@ -1467,7 +1489,13 @@ async function maybeAutoRefresh() {
       setStatus("");
     }
   } catch (e) {
+    if (e && e.name === "AbortError") {
+      if (adminUnlocked) setStatus("Background refresh still running — articles will appear shortly.");
+      return;
+    }
     if (adminUnlocked) setStatus(e.message || "Could not auto-refresh news.", true);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -2157,7 +2185,19 @@ async function loadArticles() {
   if (search) params.set("search", search);
   const qs = params.toString();
   const url = API + "/api/articles" + (qs ? `?${qs}` : "");
-  articlesCache = await (await fetch(url)).json();
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error((data && data.detail) || "Failed to load articles");
+    articlesCache = Array.isArray(data) ? data : [];
+  } catch (e) {
+    articlesCache = articlesCache || [];
+    throw e;
+  }
+  // Guard against null/string sectors from older rows
+  articlesCache.forEach((a) => {
+    if (!Array.isArray(a.sectors)) a.sectors = [];
+  });
   renderLimit = RENDER_PAGE;
   updateTabCounts();
   updateSearchCount(search);

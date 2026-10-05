@@ -109,6 +109,11 @@ def on_startup():
     global STARTUP_ERROR
     STARTUP_ERROR = None
     try:
+        # Clear any hung refresh lock left by a killed Vercel invocation.
+        try:
+            database.release_refresh_lock()
+        except Exception:
+            pass
         # Turso is the durable store — skip Blob restore (Blob free limits already failed).
         if database.using_turso():
             database.init_db(light=True)
@@ -917,10 +922,9 @@ def admin_delete_article(article_id: int, _: None = Depends(admin_auth.require_a
 def feed_summary():
     """Public counts + last auto-refresh time (no admin password)."""
     status = auto_refresh.refresh_status()
-    stats = database.get_stats()
     return {
-        "relevant": stats["relevant"],
-        "total": stats["total"],
+        "relevant": status.get("article_count") or 0,
+        "total": status.get("total_articles") or status.get("article_count") or 0,
         "last_refresh": status["last_refresh"],
         "stale": status["stale"],
         "refresh_hours": status["refresh_hours"],
