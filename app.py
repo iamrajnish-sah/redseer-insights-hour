@@ -1173,6 +1173,14 @@ def cron_weekly_intelligence(
 @app.get("/api/admin/storage-status")
 def admin_storage_status(_: None = Depends(admin_auth.require_admin)):
     """Check durable storage (Turso preferred, else disk/Blob)."""
+    # Probe the live connection so Turso status is not based on env alone.
+    if database.using_turso():
+        try:
+            with database.get_conn() as conn:
+                conn.execute("SELECT 1 AS ok").fetchone()
+        except Exception as exc:
+            db_conn.LAST_ERROR = str(exc)
+
     info = database.storage_info()
     status = {
         "backend": info["backend"],

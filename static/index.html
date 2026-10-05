@@ -1794,10 +1794,14 @@ async function loadStorageStatus() {
     if (btnPersist) btnPersist.hidden = !showBlob;
     if (btnRestore) btnRestore.hidden = !showBlob;
     if (blobHint) {
-      if (data.turso || data.backend === "turso") {
+      if ((data.turso || data.backend === "turso") && data.connected !== false) {
         blobHint.hidden = false;
         blobHint.textContent = "Turso is durable — Blob Save/Restore disabled (store was suspended).";
         blobHint.style.color = "#059669";
+      } else if (data.backend === "turso_fallback" || data.connected === false) {
+        blobHint.hidden = false;
+        blobHint.textContent = "Do not use Blob Save/Restore — fix Turso connection instead.";
+        blobHint.style.color = "#dc2626";
       } else {
         blobHint.hidden = true;
         blobHint.textContent = "";

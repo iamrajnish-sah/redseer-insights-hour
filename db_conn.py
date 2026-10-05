@@ -159,7 +159,13 @@ class HttpLibsqlCursor:
         return row
 
     def execute(self, sql, params=()):
-        result = self._client.execute(sql, _normalize_params(params))
+        try:
+            result = self._client.execute(sql, _normalize_params(params))
+        except KeyError as exc:
+            # libsql_client raises KeyError('result') on odd HTTP payloads
+            raise RuntimeError(
+                f"Turso HTTP response missing result for SQL: {str(sql)[:120]}"
+            ) from exc
         self._result = result
         self._rows = list(result.rows)
         self._index = 0
@@ -172,7 +178,12 @@ class HttpLibsqlCursor:
         count = 0
         last = None
         for params in seq:
-            last = self._client.execute(sql, _normalize_params(params))
+            try:
+                last = self._client.execute(sql, _normalize_params(params))
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"Turso HTTP response missing result for SQL: {str(sql)[:120]}"
+                ) from exc
             count += 1
         self._result = last
         self._rows = []
@@ -229,7 +240,22 @@ class HttpLibsqlConnection:
 
     def executescript(self, script):
         for stmt in _split_sql_script(script):
-            self._client.execute(stmt)
+            try:
+                self._client.execute(stmt)
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"Turso HTTP response missing result for SQL: {stmt[:120]}"
+                ) from exc
+            except Exception as exc:
+                text = str(exc).lower()
+                # CREATE IF NOT EXISTS / duplicate objects should not brick startup
+                if (
+                    "already exists" in text
+                    or "duplicate column" in text
+                    or "duplicate" in text
+                ):
+                    continue
+                raise
         return self
 
     def commit(self):
@@ -346,12 +372,29 @@ def _connect_turso_http(url, token):
 
 
 def _connect_turso_native(url, token):
-    """Fallback: native libsql binding (may use websockets)."""
+    """Fallback: native libsql binding.
+
+    Prefer HTTPS URL so Vercel does not open WebSockets.
+    """
     import libsql
 
-    conn = libsql.connect(database=url, auth_token=token)
-    CompatibleCursor(conn.execute("SELECT 1 AS ok")).fetchone()
-    return CompatibleConnection(conn, backend="turso")
+    candidates = []
+    http_url = turso_http_url(url)
+    if http_url.startswith("https://"):
+        candidates.append(http_url)
+    if url not in candidates:
+        candidates.append(url)
+
+    last_exc = None
+    for candidate in candidates:
+        try:
+            conn = libsql.connect(database=candidate, auth_token=token)
+            CompatibleCursor(conn.execute("SELECT 1 AS ok")).fetchone()
+            return CompatibleConnection(conn, backend="turso")
+        except Exception as exc:
+            last_exc = exc
+            print(f"[db] native libsql failed for {candidate[:48]}: {exc}")
+    raise RuntimeError(str(last_exc) if last_exc else "native libsql connect failed")
 
 
 def _connect_turso_embedded(url, token, db_path):
@@ -361,9 +404,6 @@ def _connect_turso_embedded(url, token, db_path):
     local_path = os.environ.get("TURSO_REPLICA_PATH") or os.path.join(
         "/tmp", "turso-replica.db"
     )
-    if db_path and db_path not in (":memory:", "news.db"):
-        # Keep using configured path when caller passes one
-        pass
     conn = libsql.connect(local_path, sync_url=url, auth_token=token)
     if hasattr(conn, "sync"):
         conn.sync()
@@ -397,7 +437,7 @@ def connect(db_path=None):
                 errors.append(f"http: {exc}")
                 print(f"[db] Turso HTTP connect failed: {exc}")
 
-            # 2) Native remote URL
+            # 2) Native remote URL (HTTPS first, then libsql://)
             try:
                 conn = _connect_turso_native(url, token)
                 LAST_ERROR = None
@@ -426,11 +466,6 @@ def connect(db_path=None):
     path = db_path or os.environ.get("DATABASE_PATH") or "news.db"
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    if LAST_DRIVER is None and not LAST_ERROR:
-        LAST_DRIVER = "sqlite"
-    elif LAST_DRIVER is None:
-        # Keep LAST_ERROR; mark active backend
-        pass
     if not turso_configured():
         LAST_DRIVER = "sqlite"
     return CompatibleConnection(conn, backend="sqlite")
@@ -463,4 +498,8 @@ def is_duplicate_column_error(exc):
     if isinstance(exc, sqlite3.OperationalError):
         return True
     text = str(exc).lower()
-    return "duplicate column" in text or "already exists" in text
+    return (
+        "duplicate column" in text
+        or "already exists" in text
+        or "duplicate" in text
+    )
