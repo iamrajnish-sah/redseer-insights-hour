@@ -271,6 +271,23 @@ def get_meta(key, default=None):
     return row["value"]
 
 
+def get_metas(keys):
+    """Fetch many meta keys in one connection (important for Turso HTTP)."""
+    keys = [k for k in (keys or []) if k]
+    if not keys:
+        return {}
+    placeholders = ",".join("?" * len(keys))
+    out = {k: None for k in keys}
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT key, value FROM meta WHERE key IN ({placeholders})",
+            keys,
+        ).fetchall()
+    for row in rows:
+        out[row["key"]] = row["value"]
+    return out
+
+
 def set_meta(key, value):
     with get_conn() as conn:
         conn.execute(

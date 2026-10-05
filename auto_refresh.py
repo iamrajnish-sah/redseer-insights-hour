@@ -60,6 +60,9 @@ def newsapi_refresh_hours():
 
 
 def _lock_minutes():
+    # Hung Vercel invocations can leave the lock behind — keep it short.
+    if os.environ.get("VERCEL"):
+        return int(os.environ.get("AUTO_REFRESH_LOCK_MINUTES", "3"))
     return int(os.environ.get("AUTO_REFRESH_LOCK_MINUTES", "15"))
 
 
@@ -70,63 +73,92 @@ def _source_stale(meta_key, hours):
     return _utcnow() - last >= timedelta(hours=hours)
 
 
-def due_sources():
+def _source_stale_from_map(meta_map, meta_key, hours):
+    last = _parse_ts(meta_map.get(meta_key))
+    if not last:
+        return True
+    return _utcnow() - last >= timedelta(hours=hours)
+
+
+def due_sources(meta_map=None):
     has_gnews = bool(os.environ.get("GNEWSAPIKEY") or os.environ.get("GNEWS_API_KEY"))
     has_newsapi = bool(os.environ.get("NEWSAPIKEY") or os.environ.get("NEWSAPI_KEY"))
+    if meta_map is None:
+        meta_map = database.get_metas([META_LAST_RSS, META_LAST_GNEWS, META_LAST_NEWSAPI])
     return {
-        "rss": _source_stale(META_LAST_RSS, rss_refresh_hours()),
-        "gnews": has_gnews and _source_stale(META_LAST_GNEWS, gnews_refresh_hours()),
-        "newsapi": has_newsapi and _source_stale(META_LAST_NEWSAPI, newsapi_refresh_hours()),
+        "rss": _source_stale_from_map(meta_map, META_LAST_RSS, rss_refresh_hours()),
+        "gnews": has_gnews and _source_stale_from_map(meta_map, META_LAST_GNEWS, gnews_refresh_hours()),
+        "newsapi": has_newsapi and _source_stale_from_map(
+            meta_map, META_LAST_NEWSAPI, newsapi_refresh_hours()
+        ),
     }
 
 
-def get_last_refresh():
+def get_last_refresh(meta_map=None):
+    if meta_map is not None:
+        return _parse_ts(meta_map.get(META_LAST_REFRESH))
     return _parse_ts(database.get_meta(META_LAST_REFRESH))
 
 
-def should_refresh(force=False):
+def should_refresh(force=False, meta_map=None, relevant_count=None):
     if force:
         return True
-    if database.get_relevant_count() == 0:
+    if relevant_count is None:
+        relevant_count = database.get_relevant_count()
+    if relevant_count == 0:
         return True
-    return any(due_sources().values())
+    return any(due_sources(meta_map).values())
 
 
-def _source_status(meta_key, hours, configured=True):
-    last = _parse_ts(database.get_meta(meta_key))
+def _source_status_from_map(meta_map, meta_key, hours, configured=True):
+    last = _parse_ts(meta_map.get(meta_key))
     return {
         "configured": configured,
         "last_refresh": _utc_iso(last) if last else None,
         "refresh_hours": hours,
-        "stale": (not configured) or _source_stale(meta_key, hours) if configured else False,
+        "stale": (not configured) or _source_stale_from_map(meta_map, meta_key, hours) if configured else False,
     }
 
 
 def refresh_status():
     has_gnews = bool(os.environ.get("GNEWSAPIKEY") or os.environ.get("GNEWS_API_KEY"))
     has_newsapi = bool(os.environ.get("NEWSAPIKEY") or os.environ.get("NEWSAPI_KEY"))
+    meta_map = database.get_metas(
+        [META_LAST_REFRESH, META_LAST_RSS, META_LAST_GNEWS, META_LAST_NEWSAPI]
+    )
+    # One connection for counts
+    with database.get_conn() as conn:
+        relevant = conn.execute(
+            "SELECT COUNT(*) c FROM articles WHERE relevant = 1 AND duplicate_of IS NULL"
+        ).fetchone()["c"]
+        total = conn.execute("SELECT COUNT(*) c FROM articles").fetchone()["c"]
     sources = {
         "rss": {
-            **_source_status(META_LAST_RSS, rss_refresh_hours()),
+            **_source_status_from_map(meta_map, META_LAST_RSS, rss_refresh_hours()),
             "free": True,
             "note": "Publisher RSS — no API quota, pulled hourly via cron.",
         },
         "gnews": {
-            **_source_status(META_LAST_GNEWS, gnews_refresh_hours(), configured=has_gnews),
+            **_source_status_from_map(
+                meta_map, META_LAST_GNEWS, gnews_refresh_hours(), configured=has_gnews
+            ),
             "free": False,
             "note": "GNews.io — festive queried hourly; full sweep every ~3 hours via metered cron.",
         },
         "newsapi": {
-            **_source_status(META_LAST_NEWSAPI, newsapi_refresh_hours(), configured=has_newsapi),
+            **_source_status_from_map(
+                meta_map, META_LAST_NEWSAPI, newsapi_refresh_hours(), configured=has_newsapi
+            ),
             "free": False,
             "note": "NewsAPI metered — every ~3 hours when a key is set.",
         },
     }
-    last = get_last_refresh()
+    last = get_last_refresh(meta_map)
     return {
-        "stale": should_refresh(force=False),
+        "stale": should_refresh(force=False, meta_map=meta_map, relevant_count=relevant),
         "last_refresh": _utc_iso(last) if last else None,
-        "article_count": database.get_relevant_count(),
+        "article_count": relevant,
+        "total_articles": total,
         "refresh_hours": rss_refresh_hours(),
         "sources": sources,
         "cron_hourly": "0 * * * *",
@@ -136,7 +168,7 @@ def refresh_status():
         "cron_rss": "0 14 * * *",
         "note": (
             "On Vercel Hobby, use GitHub Actions or cron-job.org for sub-daily schedules. "
-            "Prefer Render/Railway with a persistent disk for durable SQLite."
+            "Prefer Turso so news survives cold starts."
         ),
     }
 
@@ -156,7 +188,7 @@ def _refresh_budget_seconds():
     return float(
         os.environ.get(
             "REFRESH_BUDGET_SECONDS",
-            "50" if os.environ.get("VERCEL") else "240",
+            "45" if os.environ.get("VERCEL") else "240",
         )
     )
 

@@ -358,16 +358,41 @@ class CompatibleConnection:
         return CompatibleCursor(self._conn.cursor())
 
 
+# Reuse one HTTP client per warm serverless instance (avoids reconnect per query).
+_HTTP_CLIENT = None
+_HTTP_CLIENT_URL = None
+_HTTP_CLIENT_TOKEN = None
+
+
 def _connect_turso_http(url, token):
     """Prefer HTTPS HTTP client — works on Vercel serverless."""
+    global _HTTP_CLIENT, _HTTP_CLIENT_URL, _HTTP_CLIENT_TOKEN
     from libsql_client import create_client_sync
 
     http_url = turso_http_url(url)
+    if (
+        _HTTP_CLIENT is not None
+        and _HTTP_CLIENT_URL == http_url
+        and _HTTP_CLIENT_TOKEN == token
+        and not getattr(_HTTP_CLIENT, "closed", False)
+    ):
+        conn = HttpLibsqlConnection(_HTTP_CLIENT)
+        return conn
+
     client = create_client_sync(url=http_url, auth_token=token)
     conn = HttpLibsqlConnection(client)
     row = conn.execute("SELECT 1 AS ok").fetchone()
     if not row or row["ok"] != 1:
+        try:
+            client.close()
+        except Exception:
+            pass
         raise RuntimeError("Turso HTTP ping failed")
+    _HTTP_CLIENT = client
+    _HTTP_CLIENT_URL = http_url
+    _HTTP_CLIENT_TOKEN = token
+    # Don't close the shared client when the wrapper closes.
+    conn.close = lambda: None  # type: ignore[method-assign]
     return conn
 
 
