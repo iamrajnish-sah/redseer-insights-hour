@@ -1835,7 +1835,7 @@ async function loadStorageStatus() {
         blobHint.textContent = "";
       }
     }
-    if (data.turso || data.backend === "turso") && data.connected !== false {
+    if ((data.turso || data.backend === "turso") && data.connected !== false) {
       hint.textContent = `🗄 Turso durable DB OK · ${data.relevant_articles || 0} articles · ${data.label || data.turso_host || ""}`;
       hint.style.color = "#059669";
     } else if (data.backend === "turso_fallback" || ((data.turso || data.backend === "turso") && data.connected === false)) {
