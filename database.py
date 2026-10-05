@@ -79,7 +79,17 @@ def get_conn():
 def init_db(light=False):
     """Create schema. light=True skips heavy backfills (safer on Turso cold start)."""
     with get_conn() as conn:
-        conn.executescript(SCHEMA)
+        try:
+            conn.executescript(SCHEMA)
+        except Exception as exc:
+            if not db_conn.is_duplicate_column_error(exc):
+                # Some remote drivers error oddly on IF NOT EXISTS — continue if
+                # the core articles table is queryable.
+                try:
+                    conn.execute("SELECT 1 FROM articles LIMIT 1").fetchone()
+                    print(f"  [warning] schema ensure partial: {exc}")
+                except Exception:
+                    raise
         try:
             import scrape_ingest
 
@@ -96,20 +106,23 @@ def init_db(light=False):
                 conn.execute(stmt)
             except Exception as exc:
                 if not db_conn.is_duplicate_column_error(exc):
-                    raise
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS suppressed_articles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url TEXT,
-                resolved_url TEXT,
-                title_key TEXT,
-                deleted_at TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_suppressed_url ON suppressed_articles(url);
-            CREATE INDEX IF NOT EXISTS idx_suppressed_title ON suppressed_articles(title_key);
-            """
-        )
+                    print(f"  [warning] alter skipped ({stmt}): {exc}")
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS suppressed_articles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url TEXT,
+                    resolved_url TEXT,
+                    title_key TEXT,
+                    deleted_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_suppressed_url ON suppressed_articles(url);
+                CREATE INDEX IF NOT EXISTS idx_suppressed_title ON suppressed_articles(title_key);
+                """
+            )
+        except Exception as exc:
+            print(f"  [warning] suppressed_articles init: {exc}")
         try:
             from subscribers import init_subscriber_tables
             init_subscriber_tables(conn)
