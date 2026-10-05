@@ -498,4 +498,8 @@ def is_duplicate_column_error(exc):
     if isinstance(exc, sqlite3.OperationalError):
         return True
     text = str(exc).lower()
-    return "duplicate column" in text or "already exists" in text
+    return (
+        "duplicate column" in text
+        or "already exists" in text
+        or "duplicate" in text
+    )
