@@ -15,19 +15,60 @@ import os
 import sqlite3
 from contextlib import contextmanager
 
+# Last connect/init error — exposed by /api/health so we don't brick the site.
+LAST_ERROR = None
 
-def turso_configured():
-    url = (os.environ.get("TURSO_DATABASE_URL") or os.environ.get("LIBSQL_URL") or "").strip()
-    token = (os.environ.get("TURSO_AUTH_TOKEN") or os.environ.get("LIBSQL_AUTH_TOKEN") or "").strip()
-    return bool(url and token)
+
+def _clean_env(value):
+    text = (value or "").strip()
+    # Common paste mistakes from dashboards / chat examples
+    if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
+        text = text[1:-1].strip()
+    return text
 
 
 def turso_url():
-    return (os.environ.get("TURSO_DATABASE_URL") or os.environ.get("LIBSQL_URL") or "").strip()
+    return _clean_env(os.environ.get("TURSO_DATABASE_URL") or os.environ.get("LIBSQL_URL") or "")
 
 
 def turso_token():
-    return (os.environ.get("TURSO_AUTH_TOKEN") or os.environ.get("LIBSQL_AUTH_TOKEN") or "").strip()
+    return _clean_env(os.environ.get("TURSO_AUTH_TOKEN") or os.environ.get("LIBSQL_AUTH_TOKEN") or "")
+
+
+def turso_configured():
+    url = turso_url()
+    token = turso_token()
+    if not url or not token:
+        return False
+    # Reject the placeholder values from setup docs so we don't crash the site
+    if "...." in url or "your_token_here" in token.lower() or token.lower() == "your-turso-token":
+        return False
+    return True
+
+
+def turso_config_problem():
+    """Human message if env looks wrong / incomplete."""
+    url = turso_url()
+    token = turso_token()
+    if not url and not token:
+        return "TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are not set on Vercel."
+    if not url:
+        return "TURSO_DATABASE_URL is missing."
+    if not token:
+        return "TURSO_AUTH_TOKEN is missing."
+    if "...." in url:
+        return (
+            "TURSO_DATABASE_URL still looks like a placeholder (contains ....). "
+            "Paste the real libsql://…turso.io URL from the Turso dashboard."
+        )
+    if "your_token_here" in token.lower() or token.lower() == "your-turso-token":
+        return (
+            "TURSO_AUTH_TOKEN is still the placeholder text. "
+            "In Turso → your DB → Tokens → Create Token, then paste the real token into Vercel."
+        )
+    if not url.startswith(("libsql://", "https://", "http://")):
+        return f"TURSO_DATABASE_URL must start with libsql:// or https:// (got: {url[:32]}…)"
+    return None
 
 
 class Row(dict):
@@ -121,16 +162,36 @@ class CompatibleConnection:
         return CompatibleCursor(self._conn.cursor())
 
 
+def _normalize_turso_database_arg(url):
+    """libsql Python client accepts libsql:// or https://."""
+    url = _clean_env(url)
+    return url
+
+
 def connect(db_path=None):
     """Open a connection to Turso (preferred) or local SQLite."""
-    if turso_configured():
-        import libsql
+    global LAST_ERROR
+    problem = turso_config_problem()
+    if turso_url() or turso_token():
+        if problem and not turso_configured():
+            LAST_ERROR = problem
+            # Fall through to local so the website still boots
+            print(f"[db] Turso env invalid — {problem}")
+        elif turso_configured():
+            try:
+                import libsql
 
-        conn = libsql.connect(
-            database=turso_url(),
-            auth_token=turso_token(),
-        )
-        return CompatibleConnection(conn, backend="turso")
+                url = _normalize_turso_database_arg(turso_url())
+                token = turso_token()
+                conn = libsql.connect(database=url, auth_token=token)
+                # Prove the connection works before handing it to the app
+                CompatibleCursor(conn.execute("SELECT 1 AS ok")).fetchone()
+                LAST_ERROR = None
+                return CompatibleConnection(conn, backend="turso")
+            except Exception as exc:
+                # Fall back to local SQLite so a bad token never bricks the website.
+                LAST_ERROR = f"Turso connect failed: {exc}"
+                print(f"[db] {LAST_ERROR} — falling back to local SQLite")
 
     path = db_path or os.environ.get("DATABASE_PATH") or "news.db"
     conn = sqlite3.connect(path)

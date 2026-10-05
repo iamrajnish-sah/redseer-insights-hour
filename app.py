@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import database
+import db_conn
 import newspaper_parser
 import rss_ingest
 import newsapi_ingest
@@ -99,34 +100,73 @@ def _cron_allowed(authorization, user_agent, cron_schedule, admin_password):
     return True
 
 
+# Set during startup if Turso/init fails — site still serves pages.
+STARTUP_ERROR = None
+
+
 @app.on_event("startup")
 def on_startup():
-    # Turso is the durable store — skip Blob restore (Blob free limits already failed).
-    if database.using_turso():
-        database.init_db()
+    global STARTUP_ERROR
+    STARTUP_ERROR = None
+    try:
+        # Turso is the durable store — skip Blob restore (Blob free limits already failed).
+        if database.using_turso():
+            database.init_db(light=True)
+            scrape_ingest.init_scrape_tables()
+            try:
+                seeded = scrape_ingest.seed_default_targets()
+                if seeded.get("added"):
+                    print(f"[startup] seeded {seeded['added']} default scrape targets (Turso)")
+            except Exception as exc:
+                print(f"[startup] scrape seed skipped: {exc}")
+            print("[startup] using Turso durable database")
+            return
+
+        problem = db_conn.turso_config_problem()
+        if problem:
+            STARTUP_ERROR = problem
+            print(f"[startup] Turso not ready: {problem}")
+
+        # Persistent disk (Render/Railway) keeps SQLite across restarts — skip Blob restore.
+        if not using_persistent_disk():
+            restore_db(database.DB_PATH)
+        database.init_db(light=False)
         scrape_ingest.init_scrape_tables()
         try:
             seeded = scrape_ingest.seed_default_targets()
             if seeded.get("added"):
-                print(f"[startup] seeded {seeded['added']} default scrape targets (Turso)")
+                print(f"[startup] seeded {seeded['added']} default scrape targets")
         except Exception as exc:
             print(f"[startup] scrape seed skipped: {exc}")
-        print("[startup] using Turso durable database")
-        return
-
-    # Persistent disk (Render/Railway) keeps SQLite across restarts — skip Blob restore.
-    if not using_persistent_disk():
-        restore_db(database.DB_PATH)
-    database.init_db()
-    scrape_ingest.init_scrape_tables()
-    try:
-        seeded = scrape_ingest.seed_default_targets()
-        if seeded.get("added"):
-            print(f"[startup] seeded {seeded['added']} default scrape targets")
+        if not using_persistent_disk():
+            restore_db(database.DB_PATH)
     except Exception as exc:
-        print(f"[startup] scrape seed skipped: {exc}")
-    if not using_persistent_disk():
-        restore_db(database.DB_PATH)
+        # Never brick the whole website because DB bootstrap failed.
+        STARTUP_ERROR = str(exc)
+        print(f"[startup] FAILED (site will still boot): {exc}")
+
+
+@app.get("/api/health")
+def health():
+    """Public health — use this to debug Turso / env issues without admin login."""
+    info = {
+        "ok": STARTUP_ERROR is None and db_conn.LAST_ERROR is None,
+        "startup_error": STARTUP_ERROR,
+        "db_error": db_conn.LAST_ERROR,
+        "turso_configured": database.using_turso(),
+        "turso_problem": db_conn.turso_config_problem(),
+        "storage": database.storage_info(),
+    }
+    if database.using_turso():
+        try:
+            with database.get_conn() as conn:
+                row = conn.execute("SELECT COUNT(*) AS c FROM articles").fetchone()
+                info["article_count"] = row["c"] if row else 0
+            info["turso_ping"] = "ok"
+        except Exception as exc:
+            info["ok"] = False
+            info["turso_ping"] = str(exc)
+    return info
 
 
 def _row_to_dict(row):
