@@ -1062,8 +1062,9 @@
       <a class="btn btn-ghost btn-sm" href="/intelligence">🧠 Intelligence Hub</a>
       <button class="btn btn-ghost btn-sm" id="btnRefilterRh" onclick="refilterRideHailing()">↺ Refilter ride hailing</button>
       <button class="btn btn-ghost btn-sm" id="btnDedupe" onclick="removeDuplicates()">↺ Remove duplicates</button>
-      <button class="btn btn-ghost btn-sm" id="btnPersist" onclick="saveToCloud()">☁ Save to Cloud</button>
-      <button class="btn btn-ghost btn-sm" id="btnRestore" onclick="restoreFromCloud()">⬇ Restore from Cloud</button>
+      <button class="btn btn-ghost btn-sm" id="btnPersist" onclick="saveToCloud()" hidden>☁ Save to Cloud</button>
+      <button class="btn btn-ghost btn-sm" id="btnRestore" onclick="restoreFromCloud()" hidden>⬇ Restore from Cloud</button>
+      <span class="field-label" id="blobLegacyHint" hidden></span>
     </div>
     <div class="panel-row">
       <span class="field-label" id="emailHint"></span>
@@ -1786,9 +1787,28 @@ async function loadStorageStatus() {
   try {
     const data = await (await adminFetch(API + "/api/admin/storage-status")).json();
     const hint = document.getElementById("emailHint");
-    if (data.turso || data.backend === "turso") {
+    const btnPersist = document.getElementById("btnPersist");
+    const btnRestore = document.getElementById("btnRestore");
+    const blobHint = document.getElementById("blobLegacyHint");
+    const showBlob = !!data.blob_actions_enabled && !data.turso && data.backend !== "turso";
+    if (btnPersist) btnPersist.hidden = !showBlob;
+    if (btnRestore) btnRestore.hidden = !showBlob;
+    if (blobHint) {
+      if (data.turso || data.backend === "turso") {
+        blobHint.hidden = false;
+        blobHint.textContent = "Turso is durable — Blob Save/Restore disabled (store was suspended).";
+        blobHint.style.color = "#059669";
+      } else {
+        blobHint.hidden = true;
+        blobHint.textContent = "";
+      }
+    }
+    if (data.turso || data.backend === "turso") && data.connected !== false {
       hint.textContent = `🗄 Turso durable DB OK · ${data.relevant_articles || 0} articles · ${data.label || data.turso_host || ""}`;
       hint.style.color = "#059669";
+    } else if (data.backend === "turso_fallback" || ((data.turso || data.backend === "turso") && data.connected === false)) {
+      hint.textContent = `⚠ Turso not connected — ${data.db_error || data.hint || "check /api/health"}`;
+      hint.style.color = "#dc2626";
     } else if (data.persistent_disk) {
       hint.textContent = `💾 Persistent disk OK · ${data.relevant_articles || 0} articles · ${data.database_path || ""}`;
       hint.style.color = "#059669";
@@ -1796,7 +1816,7 @@ async function loadStorageStatus() {
       hint.textContent = `☁ Cloud save OK (${Math.round((data.local_db_bytes || 0) / 1024)} KB, ${data.relevant_articles || 0} articles) — prefer Turso to avoid Blob free-limit wipes`;
       hint.style.color = "#b45309";
     } else if (data.blob_configured) {
-      hint.textContent = data.hint || "Blob linked — use Restore from Cloud or Save to Cloud.";
+      hint.textContent = data.hint || "Blob linked — prefer Turso; Blob free limits already failed once.";
       hint.style.color = "#b45309";
     } else {
       hint.textContent = data.hint || "⚠ No durable DB — add TURSO_DATABASE_URL + TURSO_AUTH_TOKEN on Vercel.";
@@ -1996,29 +2016,28 @@ async function seedDefaultScrapeTargets() {
 }
 
 async function restoreFromCloud() {
-  if (!confirm("Restore your saved database from Vercel Blob?\n\nThis brings back newspaper uploads and processed articles if they were saved to the cloud.")) return;
   setBtnLoading("btnRestore", true);
-  setStatus("Restoring database from Vercel Blob ...");
+  setStatus("Checking durable storage…");
   try {
     const resp = await adminFetch(API + "/api/admin/restore-db", { method: "POST" });
     const data = await readJson(resp);
-    if (!resp.ok) throw new Error(data.detail || data.message || "Restore failed");
+    if (!resp.ok) throw new Error(typeof data.detail === "string" ? data.detail : (data.message || "Restore failed"));
     await loadArticles();
     await loadStats();
     await loadStorageStatus();
-    setStatus(data.message + (data.relevant_articles != null ? ` (${data.relevant_articles} relevant articles)` : ""));
+    setStatus(data.message + (data.relevant_articles != null ? ` (${data.relevant_articles} relevant articles)` : ""), !data.ok);
   } catch (e) { setStatus(e.message, true); }
   finally { setBtnLoading("btnRestore", false); }
 }
 
 async function saveToCloud() {
   setBtnLoading("btnPersist", true);
-  setStatus("Saving database to Vercel Blob ...");
+  setStatus("Checking durable storage…");
   try {
     const resp = await adminFetch(API + "/api/admin/persist-db", { method: "POST" });
     const data = await readJson(resp);
-    if (!resp.ok) throw new Error(data.detail || data.message || "Cloud save failed");
-    setStatus(data.message || "Database saved to Vercel Blob.");
+    if (!resp.ok) throw new Error(typeof data.detail === "string" ? data.detail : (data.message || "Cloud save failed"));
+    setStatus(data.message || "Database saved.", !data.ok);
     await loadStorageStatus();
   } catch (e) { setStatus(e.message, true); }
   finally { setBtnLoading("btnPersist", false); }
