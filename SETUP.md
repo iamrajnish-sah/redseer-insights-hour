@@ -1,7 +1,27 @@
 # One-time setup checklist
 
-Code is already on `main` and Vercel production deploys from GitHub.
-Your remaining work is: **durable database** + **CRON_SECRET** + (later) Apify / scrape targets.
+**Recommended path (chosen for you): stay on Vercel + Turso free DB.**  
+See **[TURSO_SETUP.md](./TURSO_SETUP.md)** for click-by-click steps.
+
+Do **not** rely on Vercel Blob again — free limits already wiped your data once.
+
+Render is optional and **not free** for a durable disk. Skip it unless you want to pay.
+
+---
+
+## What you still need to do
+
+1. Create Turso DB → add `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` on Vercel → Redeploy  
+2. Keep GitHub Actions secrets: `CRON_SECRET` + `APP_BASE_URL=https://redseer-insights-hour.vercel.app`  
+3. Later: `APIFY_TOKEN` for Instagram  
+
+Automation (hourly news, 3h APIs, 5h website+IG scrape) runs from GitHub Actions — **no need to open the website**.
+
+---
+
+## Old notes (Render / Blob)
+
+Kept below only as reference. Prefer Turso.
 
 ---
 
