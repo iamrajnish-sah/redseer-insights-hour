@@ -76,7 +76,8 @@ def get_conn():
         yield conn
 
 
-def init_db():
+def init_db(light=False):
+    """Create schema. light=True skips heavy backfills (safer on Turso cold start)."""
     with get_conn() as conn:
         conn.executescript(SCHEMA)
         try:
@@ -109,6 +110,21 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_suppressed_title ON suppressed_articles(title_key);
             """
         )
+        try:
+            from subscribers import init_subscriber_tables
+            init_subscriber_tables(conn)
+        except Exception as exc:
+            print(f"  [warning] subscriber tables init failed: {exc}")
+        try:
+            from intelligence_hub import init_intelligence_tables
+            init_intelligence_tables(conn)
+        except Exception as exc:
+            print(f"  [warning] intelligence tables init failed: {exc}")
+
+        if light or using_turso():
+            # Keep Turso startup fast/reliable — heavy cleanups can run later via admin.
+            return
+
         _backfill_title_keys(conn)
         _restore_cross_date_duplicates(conn)
         dedupe_by_url(conn)
@@ -132,16 +148,6 @@ def init_db():
         except Exception as exc:
             if not db_conn.is_duplicate_column_error(exc):
                 print(f"  [warning] url index: {exc}")
-        try:
-            from subscribers import init_subscriber_tables
-            init_subscriber_tables(conn)
-        except Exception as exc:
-            print(f"  [warning] subscriber tables init failed: {exc}")
-        try:
-            from intelligence_hub import init_intelligence_tables
-            init_intelligence_tables(conn)
-        except Exception as exc:
-            print(f"  [warning] intelligence tables init failed: {exc}")
         _migrate_sector_taxonomies(conn)
 
 

@@ -14,9 +14,20 @@ Automation (news + website scrape + Instagram) runs via **GitHub Actions + CRON_
 
 1. Open https://turso.tech and sign up / log in (GitHub login is fine).
 2. Create a database, e.g. name: `redseer-insights`.
-3. Open the database → copy:
-   - **Database URL** (looks like `libsql://redseer-insights-xxxx.turso.io`)
-   - **Auth Token** (create a token if needed)
+3. Open the database → copy **both** of these from the Turso dashboard (not from this chat):
+
+| What | Example of a **real** value (yours will differ) |
+|---|---|
+| **Database URL** | `libsql://redseer-insights-rajnish.aws-ap-south-1.turso.io` |
+| **Auth Token** | a long string like `eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9…` (Create Token if needed) |
+
+**Do not** paste the placeholder text from any guide:
+
+- ❌ `libsql://....turso.io`
+- ❌ `your_token_here`
+- ❌ `your-turso-token`
+
+Those fake values crash the site with `500 FUNCTION_INVOCATION_FAILED`.
 
 ---
 
@@ -27,11 +38,30 @@ Automation (news + website scrape + Instagram) runs via **GitHub Actions + CRON_
 
 | Name | Value |
 |---|---|
-| `TURSO_DATABASE_URL` | `libsql://…turso.io` |
-| `TURSO_AUTH_TOKEN` | your Turso token |
+| `TURSO_DATABASE_URL` | paste the **real** `libsql://…turso.io` URL from Turso |
+| `TURSO_AUTH_TOKEN` | paste the **real** token from Turso → Tokens |
 | `CRON_SECRET` | the same secret you already set |
 
 3. **Redeploy** the project (Deployments → … → Redeploy, or push to `main`).
+
+### Quick check after redeploy
+
+Open: https://redseer-insights-hour.vercel.app/api/health
+
+You want:
+
+- `"turso_configured": true`
+- `"turso_ping": "ok"`
+- `"db_driver": "http"` (HTTPS — correct for Vercel)
+
+If `"turso_problem"` mentions placeholders, replace the Vercel env values with the real Turso URL + token and redeploy again.
+
+**Do not paste your Turso token into chat / Slack / email.** Keep it only in Vercel env vars.
+
+### If the site 500s after adding real credentials
+
+Older deploys used WebSockets (`libsql://` → `wss://`), which often crash on Vercel serverless.
+Current code connects over **HTTPS** instead. Merge the latest fix, redeploy, then re-check `/api/health`.
 
 After deploy, Backend Management should show something like:  
 `Turso durable DB OK · N articles`

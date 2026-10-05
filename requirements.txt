@@ -11,4 +11,5 @@ pypdf
 python-docx
 openpyxl
 libsql
+libsql-client
 vercel>=0.0.8
