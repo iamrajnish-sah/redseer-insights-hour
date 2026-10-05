@@ -67,9 +67,10 @@ def _title_brand(articles, handle=None, label=None):
         label = label or meta.get("profile_label") or ""
     if not handle:
         handle = "instagram"
-    brand = label or handle.title()
+    brand = (label or "").strip() or f"{handle.title()} Instagram"
     if "instagram" not in brand.lower():
         brand = f"{brand} Instagram"
+    brand = brand.replace(" India Instagram", " Instagram")
     dates = []
     for article in articles:
         meta = _parse_meta(article)

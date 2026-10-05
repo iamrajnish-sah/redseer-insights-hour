@@ -421,10 +421,27 @@ def _extract_hashtags(caption, item):
 
 
 def _posted_by_line(item, profile_handle):
-    owner = (item.get("ownerUsername") or item.get("username") or "").strip()
-    owner_name = (item.get("ownerFullName") or item.get("fullName") or "").strip()
-    tagged = item.get("taggedUsers") or item.get("mentions") or []
-    coauthors = item.get("coauthorProducers") or item.get("coAuthorProducers") or []
+    owner_obj = item.get("owner") if isinstance(item.get("owner"), dict) else {}
+    owner = (
+        item.get("ownerUsername")
+        or item.get("username")
+        or owner_obj.get("username")
+        or ""
+    ).strip()
+    owner_name = (
+        item.get("ownerFullName")
+        or item.get("fullName")
+        or owner_obj.get("fullName")
+        or owner_obj.get("full_name")
+        or ""
+    ).strip()
+    tagged = item.get("taggedUsers") or item.get("mentions") or item.get("firstComment") or []
+    coauthors = (
+        item.get("coauthorProducers")
+        or item.get("coAuthorProducers")
+        or item.get("collaborators")
+        or []
+    )
     candidates = []
     if owner and owner.lower() != profile_handle.lower():
         label = f"{owner} ({owner_name})" if owner_name else owner
@@ -447,11 +464,18 @@ def _posted_by_line(item, profile_handle):
                     candidates.append(f"{u} ({n})" if n else u)
             elif isinstance(tag, str) and tag.strip():
                 candidates.append(tag.strip().lstrip("@"))
+    caption = item.get("caption") or item.get("text") or ""
+    if isinstance(caption, dict):
+        caption = caption.get("text") or ""
+    mentions = re.findall(r"@([A-Za-z0-9._]+)", str(caption or ""))
+    for m in mentions[:2]:
+        if m.lower() != profile_handle.lower():
+            candidates.append(m)
     if candidates:
         return candidates[0]
     if owner_name:
         return f"{profile_handle} ({owner_name})"
-    return profile_handle
+    return profile_handle or "instagram"
 
 
 def _paid_partnership(caption, item):
@@ -646,6 +670,7 @@ def scrape_instagram_target(target, max_posts=None):
             "resultsType": "posts",
             "resultsLimit": max_posts,
             "searchLimit": max_posts,
+            "addParentData": False,
         }
     items = _apify_run_sync(actor, payload, wait_secs=int(os.environ.get("APIFY_WAIT_SECS", "120")))
     articles = []
@@ -657,6 +682,16 @@ def scrape_instagram_target(target, max_posts=None):
     scrape_all = _instagram_scrape_all_posts()
     for item in items[: max_posts * 3 if not scrape_all else max_posts]:
         if not isinstance(item, dict):
+            continue
+        # Skip bare profile rows from Apify (no post body / media).
+        if not (
+            item.get("caption")
+            or item.get("text")
+            or item.get("shortCode")
+            or item.get("url")
+            or item.get("displayUrl")
+            or item.get("imageUrl")
+        ):
             continue
         article = _instagram_item_to_article(item, handle, label, sector)
         if not scrape_all and not _festive_player_relevant(

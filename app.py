@@ -202,6 +202,19 @@ def _row_to_dict(row):
             d["scrape_meta"] = {}
     elif not raw_meta:
         d["scrape_meta"] = {}
+    if d.get("origin") == "instagram" and isinstance(d.get("scrape_meta"), dict):
+        meta = d["scrape_meta"]
+        if not meta.get("cover_image") and d.get("image_url"):
+            meta["cover_image"] = d["image_url"]
+        if not meta.get("post_url"):
+            meta["post_url"] = d.get("resolved_url") or d.get("url") or ""
+        if not meta.get("posted_by"):
+            meta["posted_by"] = d.get("source") or d.get("page") or "instagram"
+        if not meta.get("date_ist") and d.get("pub_date"):
+            meta["date_ist"] = d["pub_date"]
+        if not meta.get("content_type") and d.get("subtitle"):
+            meta["content_type"] = d["subtitle"]
+        d["scrape_meta"] = meta
     return d
 
 
@@ -826,17 +839,31 @@ def public_export_intelligence_docx(report_id: int):
 @app.get("/api/articles")
 def get_articles(sector: str = None, pub_date: str = None, search: str = None, days: int = None):
     rows = database.get_relevant_articles(pub_date=pub_date, sector=sector, search=search, days=days)
-    articles = [_row_to_dict(r) for r in rows]
+    articles = []
+    for r in rows:
+        item = _row_to_dict(r)
+        origin = (item.get("origin") or "").lower()
+        if origin in ("instagram", "website_scrape"):
+            continue
+        articles.append(item)
     return articles
 
 
 @app.get("/api/festive-sale")
 def get_festive_sale_news(days: int = 30, limit: int = 24):
-    """Public viewer strip for the Festive Sale sector."""
+    """Public viewer strip for the Festive Sale sector (never Instagram / website scrape)."""
     days = max(1, min(int(days or 30), 90))
     limit = max(1, min(int(limit or 24), 60))
     rows = database.get_relevant_articles(sector="festive_sale", days=days)
-    articles = [_row_to_dict(row) for row in rows[:limit]]
+    articles = []
+    for row in rows:
+        item = _row_to_dict(row)
+        origin = (item.get("origin") or "").lower()
+        if origin in ("instagram", "website_scrape"):
+            continue
+        articles.append(item)
+        if len(articles) >= limit:
+            break
     if len(articles) < limit:
         # Backfill older rows that match festive keywords but were tagged
         # before festive_sale became a first-class sector.
@@ -845,6 +872,9 @@ def get_festive_sale_news(days: int = 30, limit: int = 24):
             if row["id"] in seen:
                 continue
             item = _row_to_dict(row)
+            origin = (item.get("origin") or "").lower()
+            if origin in ("instagram", "website_scrape"):
+                continue
             if is_festive_sale_relevant(
                 item.get("title") or "",
                 item.get("body") or item.get("summary") or "",
@@ -1120,6 +1150,46 @@ def cron_refresh_metered(
         }
     except Exception as exc:
         raise HTTPException(500, f"Metered cron failed: {exc}") from exc
+
+
+@app.post("/api/admin/festive-insights/generate")
+async def admin_generate_festive_insights(
+    request: Request,
+    _: None = Depends(admin_auth.require_admin),
+):
+    """Generate festive_sale intelligence for today (daily) or this ISO week (weekly)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    period = ((body or {}).get("period") or "daily").strip().lower()
+    if period not in ("daily", "weekly", "week", "day"):
+        raise HTTPException(400, "period must be daily or weekly")
+    if period == "day":
+        period = "daily"
+    if period == "week":
+        period = "weekly"
+    force = bool((body or {}).get("force", True))
+    result = festive_jobs.generate_festive_intelligence(
+        force=force,
+        generated_by="admin-festive-ui",
+        period=period,
+    )
+    if result.get("ok"):
+        report = intelligence_hub.get_report(result["report_id"])
+        enriched = intelligence_hub.enrich_report_with_sources(report) if report else None
+        return {
+            **result,
+            "message": (
+                f"Festive {period} insights ready"
+                + (" (cached)." if result.get("cached") else ".")
+            ),
+            "report": enriched,
+            "view_url": f"/intelligence?report={result['report_id']}",
+        }
+    reason = result.get("reason") or result.get("error") or "Generation failed"
+    status = 404 if result.get("skipped") else 500
+    raise HTTPException(status, reason)
 
 
 @app.get("/api/cron/festive-intelligence")

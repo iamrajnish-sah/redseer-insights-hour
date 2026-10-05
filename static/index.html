@@ -809,6 +809,77 @@
     gap: 8px;
     margin-bottom: 10px;
   }
+  .festive-insight-actions { margin-top: 4px; }
+  .ig-scrape-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 220px;
+    max-width: 260px;
+    text-decoration: none;
+    color: inherit;
+    border: 1px solid #fbcfe8;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .ig-scrape-card .ig-thumb {
+    height: 140px;
+    background: #fce7f3;
+    overflow: hidden;
+  }
+  .ig-scrape-card .ig-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .ig-scrape-card .ig-body {
+    padding: 10px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+  }
+  .ig-scrape-card .ig-meta {
+    font-size: 0.68rem;
+    color: #be185d;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  .ig-scrape-card .ig-posted-by {
+    font-size: 0.78rem;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .ig-scrape-card h3 {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.35;
+  }
+  .ig-scrape-card p {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .ig-scrape-card .ig-links {
+    display: flex;
+    gap: 10px;
+    margin-top: auto;
+    padding-top: 4px;
+  }
+  .ig-scrape-card .ig-links a {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #be185d;
+  }
+  .intel-strip-ig {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
   .scrape-box {
     border: 1px solid var(--border-strong);
     border-radius: 10px;
@@ -1148,6 +1219,12 @@
       <span class="intel-hub-chevron" aria-hidden="true">▾</span>
     </button>
     <div class="intel-hub-body" id="festiveHubBody">
+      <div class="scrape-result-actions festive-insight-actions">
+        <button class="btn btn-primary btn-sm" type="button" id="btnFestiveDailyInsights" onclick="generateFestiveInsights('daily')">✦ Daily insights</button>
+        <button class="btn btn-teal btn-sm" type="button" id="btnFestiveWeeklyInsights" onclick="generateFestiveInsights('weekly')">✦ Weekly insights</button>
+        <a class="btn btn-ghost btn-sm" href="/intelligence">Open Intelligence Hub</a>
+      </div>
+      <p class="scrape-meta" id="festiveInsightsNote">Generate a festive sale brief from news only (Instagram posts are never included).</p>
       <div class="intel-strip" id="festiveStrip"></div>
     </div>
   </section>
@@ -1744,6 +1821,83 @@ function renderScrapeResultCards(articles, emptyTitle, emptyBody) {
   }).join("");
 }
 
+function igMeta(article) {
+  const meta = article && article.scrape_meta;
+  if (meta && typeof meta === "object") return meta;
+  return {};
+}
+
+function renderInstagramScrapeCards(articles, emptyTitle, emptyBody) {
+  if (!articles.length) {
+    return `<div class="intel-card">
+      <div class="intel-meta">Instagram</div>
+      <h3>${escapeHtml(emptyTitle)}</h3>
+      <p>${escapeHtml(emptyBody)}</p>
+    </div>`;
+  }
+  return `<div class="intel-strip-ig">${articles.map((a) => {
+    const meta = igMeta(a);
+    const postedBy = meta.posted_by || a.source || "Instagram";
+    const photo = meta.cover_image || a.image_url || "";
+    const postUrl = meta.post_url || a.resolved_url || a.url || "#";
+    const caption = a.body || a.title || "";
+    const contentType = meta.content_type || a.subtitle || "Post";
+    const when = [meta.date_ist || a.pub_date || "", meta.time_ist || ""].filter(Boolean).join(" · ");
+    const thumb = photo
+      ? `<div class="ig-thumb"><img src="${escapeAttr(photo)}" alt="" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
+      : `<div class="ig-thumb" style="display:flex;align-items:center;justify-content:center;color:#be185d;font-size:0.75rem;">No photo</div>`;
+    const photoLink = photo
+      ? `<a href="${escapeAttr(photo)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Photo</a>`
+      : "";
+    return `<article class="ig-scrape-card">
+      ${thumb}
+      <div class="ig-body">
+        <div class="ig-meta">${escapeHtml(contentType)} · ${escapeHtml(when)}</div>
+        <div class="ig-posted-by">Posted by ${escapeHtml(postedBy)}</div>
+        <h3>${escapeHtml((a.title || caption || "Instagram post").slice(0, 100))}</h3>
+        <p>${escapeHtml(String(caption).slice(0, 140))}</p>
+        <div class="ig-links">
+          <a href="${escapeAttr(postUrl)}" target="_blank" rel="noopener">Open post</a>
+          ${photoLink}
+        </div>
+      </div>
+    </article>`;
+  }).join("")}</div>`;
+}
+
+async function generateFestiveInsights(period) {
+  const note = document.getElementById("festiveInsightsNote");
+  const allowed = await ensureAdminAccess();
+  if (!allowed) return;
+  const label = period === "weekly" ? "weekly" : "daily";
+  if (note) note.textContent = `Generating festive ${label} insights…`;
+  setStatus(`Generating festive ${label} insights…`);
+  try {
+    const resp = await adminFetch(API + "/api/admin/festive-insights/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ period: label, force: true }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error((data && data.detail) || "Failed to generate insights");
+    const msg = data.message || `Festive ${label} insights ready.`;
+    if (note) {
+      note.textContent = `${msg} ${data.period_label || ""} · ${data.article_count || 0} articles.`;
+    }
+    setStatus(msg);
+    showToast(msg);
+    if (data.view_url) {
+      window.open(data.view_url, "_blank", "noopener");
+    }
+    await loadIntelligenceBriefs();
+  } catch (e) {
+    const err = e.message || String(e);
+    if (note) note.textContent = `Could not generate ${label} insights: ${err}`;
+    setStatus(err, true);
+    showToast(err, true);
+  }
+}
+
 async function loadWebsiteScrapeNews() {
   const wrap = document.getElementById("websiteResultsStrip");
   const hint = document.getElementById("websiteResultsHint");
@@ -1781,10 +1935,10 @@ async function loadInstagramScrapeNews() {
         : "Add APIFY_TOKEN, then Run all IG — posts show here";
     }
     if (note && data.excel_note) note.textContent = data.excel_note;
-    wrap.innerHTML = renderScrapeResultCards(
+    wrap.innerHTML = renderInstagramScrapeCards(
       articles,
       "No Instagram scrape news yet",
-      "Set APIFY_TOKEN, load default IG handles, then Run all IG. All profile posts appear here and in Excel — not in the main feed."
+      "Set APIFY_TOKEN, load default IG handles, then Run all IG. Posts with photo + posted-by appear here only — never in Festive Sale or the main feed."
     );
   } catch (_) {
     wrap.innerHTML = "";
@@ -2198,6 +2352,11 @@ async function loadArticles() {
   articlesCache.forEach((a) => {
     if (!Array.isArray(a.sectors)) a.sectors = [];
   });
+  // Never show Instagram / website scrape rows in the main grid (hubs only).
+  articlesCache = articlesCache.filter((a) => {
+    const origin = (a.origin || "").toLowerCase();
+    return origin !== "instagram" && origin !== "website_scrape";
+  });
   renderLimit = RENDER_PAGE;
   updateTabCounts();
   updateSearchCount(search);
@@ -2334,7 +2493,10 @@ function renderArticles() {
   const grid = document.getElementById("grid");
   const empty = document.getElementById("emptyState");
   const loadMoreWrap = document.getElementById("loadMoreWrap");
-  let list = articlesCache;
+  let list = articlesCache.filter((a) => {
+    const origin = (a.origin || "").toLowerCase();
+    return origin !== "instagram" && origin !== "website_scrape";
+  });
   if (currentSector) {
     list = list.filter(a =>
       a.sectors.includes(currentSector) ||

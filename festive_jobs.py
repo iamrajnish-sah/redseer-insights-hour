@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import classify_and_summarize
 import database
@@ -33,7 +33,9 @@ def festive_candidate_rows(limit=12):
         body = row["body"] or ""
         subtitle = row["subtitle"] or ""
         origin = (row["origin"] or "").lower()
-        if origin in ("website_scrape", "instagram", "festive_sale"):
+        if origin in ("instagram", "website_scrape"):
+            continue
+        if origin in ("festive_sale",):
             festive.append(row)
             continue
         if is_festive_sale_relevant(title, body, subtitle):
@@ -95,20 +97,27 @@ def summarize_festive_only(limit=None):
     }
 
 
-def festive_period_dates(hours=None):
-    """Use calendar today for the brief window (simple daily festive rollup)."""
-    today = date.today().isoformat()
-    return today, today
+def festive_period_dates(period="daily", hours=None):
+    """Calendar window for festive intelligence briefs."""
+    period = (period or "daily").strip().lower()
+    today = date.today()
+    if period in ("weekly", "week"):
+        start = today - timedelta(days=today.weekday())
+        end = start + timedelta(days=6)
+        return start.isoformat(), end.isoformat()
+    # daily (default)
+    iso = today.isoformat()
+    return iso, iso
 
 
-def generate_festive_intelligence(force=True, generated_by="cron"):
+def generate_festive_intelligence(force=True, generated_by="cron", period="daily"):
     if not intelligence_hub.intelligence_configured():
         return {
             "ok": False,
             "skipped": True,
             "reason": "INTELLIGENCE_GEMINI_API_KEY not configured",
         }
-    start_date, end_date = festive_period_dates()
+    start_date, end_date = festive_period_dates(period=period)
     try:
         report = intelligence_hub.generate_or_get_report(
             "festive_sale",
@@ -128,16 +137,17 @@ def generate_festive_intelligence(force=True, generated_by="cron"):
         "article_count": report.get("article_count"),
         "start_date": start_date,
         "end_date": end_date,
+        "period": period,
         "period_label": report.get("period_label"),
     }
 
 
-def email_festive_intelligence(report=None):
+def email_festive_intelligence(report=None, period="daily"):
     """Email festive_sale brief to subscribers / sector recipient list."""
     if not email_digest.smtp_configured():
         return {"ok": False, "skipped": True, "reason": "SMTP not configured"}
 
-    start_date, end_date = festive_period_dates()
+    start_date, end_date = festive_period_dates(period=period)
     if report is None:
         report = intelligence_hub.get_cached_report("festive_sale", start_date, end_date)
     if not report:
@@ -147,7 +157,7 @@ def email_festive_intelligence(report=None):
         return {"ok": False, "skipped": True, "reason": "No festive intelligence report to email"}
 
     enriched = intelligence_hub.enrich_report_with_sources(report)
-    period = enriched.get("period_label") or f"{start_date}"
+    period_label = enriched.get("period_label") or f"{start_date}"
 
     # Prefer subscribers who follow festive_sale; fall back to sector_recipients.json
     import subscribers
@@ -178,11 +188,11 @@ def email_festive_intelligence(report=None):
             footer = email_digest.build_email_footer(item["token"])
         html = email_digest._wrap_email_html(
             header_title=f"{email_digest.PRODUCT_NAME} — Festive Sale Intelligence",
-            header_subtitle=period,
+            header_subtitle=period_label,
             body_rows=card,
             footer_html=footer,
         )
-        subject = f"{email_digest.PRODUCT_NAME} — Festive Sale — {period}"
+        subject = f"{email_digest.PRODUCT_NAME} — Festive Sale — {period_label}"
         email_digest._send_email([item["email"]], subject, html)
         sent.append(item["email"])
 
@@ -191,13 +201,13 @@ def email_festive_intelligence(report=None):
         "sent_count": len(sent),
         "emails": sent,
         "report_id": enriched.get("id"),
-        "period_label": period,
+        "period_label": period_label,
     }
 
 
-def run_festive_intelligence_and_email(force=True):
-    gen = generate_festive_intelligence(force=force, generated_by="cron-festive")
+def run_festive_intelligence_and_email(force=True, period="daily"):
+    gen = generate_festive_intelligence(force=force, generated_by="cron-festive", period=period)
     mail = {"ok": False, "skipped": True, "reason": "generation skipped"}
     if gen.get("ok"):
-        mail = email_festive_intelligence()
+        mail = email_festive_intelligence(period=period)
     return {"generation": gen, "email": mail}
