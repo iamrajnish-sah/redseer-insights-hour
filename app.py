@@ -150,22 +150,33 @@ def on_startup():
 def health():
     """Public health — use this to debug Turso / env issues without admin login."""
     info = {
-        "ok": STARTUP_ERROR is None and db_conn.LAST_ERROR is None,
+        "ok": STARTUP_ERROR is None and db_conn.LAST_ERROR is None and (
+            (not database.using_turso()) or db_conn.LAST_DRIVER in ("http", "native", "embedded")
+        ),
         "startup_error": STARTUP_ERROR,
         "db_error": db_conn.LAST_ERROR,
+        "db_driver": db_conn.LAST_DRIVER,
         "turso_configured": database.using_turso(),
         "turso_problem": db_conn.turso_config_problem(),
+        "turso_http_url": db_conn.turso_http_url() if db_conn.turso_url() else None,
         "storage": database.storage_info(),
     }
     if database.using_turso():
-        try:
-            with database.get_conn() as conn:
-                row = conn.execute("SELECT COUNT(*) AS c FROM articles").fetchone()
-                info["article_count"] = row["c"] if row else 0
-            info["turso_ping"] = "ok"
-        except Exception as exc:
+        if db_conn.LAST_ERROR:
             info["ok"] = False
-            info["turso_ping"] = str(exc)
+            info["turso_ping"] = db_conn.LAST_ERROR
+        else:
+            try:
+                with database.get_conn() as conn:
+                    row = conn.execute("SELECT COUNT(*) AS c FROM articles").fetchone()
+                    info["article_count"] = row["c"] if row else 0
+                    info["active_backend"] = getattr(conn, "backend", None)
+                info["turso_ping"] = "ok" if db_conn.LAST_DRIVER in ("http", "native", "embedded") else "fallback-local"
+                if info["turso_ping"] != "ok":
+                    info["ok"] = False
+            except Exception as exc:
+                info["ok"] = False
+                info["turso_ping"] = str(exc)
     return info
 
 

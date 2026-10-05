@@ -48,9 +48,20 @@ Those fake values crash the site with `500 FUNCTION_INVOCATION_FAILED`.
 
 Open: https://redseer-insights-hour.vercel.app/api/health
 
-You want `"turso_configured": true` and `"turso_ping": "ok"`.
+You want:
+
+- `"turso_configured": true`
+- `"turso_ping": "ok"`
+- `"db_driver": "http"` (HTTPS — correct for Vercel)
 
 If `"turso_problem"` mentions placeholders, replace the Vercel env values with the real Turso URL + token and redeploy again.
+
+**Do not paste your Turso token into chat / Slack / email.** Keep it only in Vercel env vars.
+
+### If the site 500s after adding real credentials
+
+Older deploys used WebSockets (`libsql://` → `wss://`), which often crash on Vercel serverless.
+Current code connects over **HTTPS** instead. Merge the latest fix, redeploy, then re-check `/api/health`.
 
 After deploy, Backend Management should show something like:  
 `Turso durable DB OK · N articles`
