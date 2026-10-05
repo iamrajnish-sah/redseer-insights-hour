@@ -1,9 +1,10 @@
 """
 database.py
 
-Simple SQLite storage for articles. One file, no server needed.
-Good enough for an internal single-office tool; can swap for Postgres later
-if this grows into a multi-user product.
+SQLite / Turso storage for articles.
+When TURSO_DATABASE_URL + TURSO_AUTH_TOKEN are set, all reads/writes go to
+Turso Cloud (durable ~5GB free). Otherwise uses a local SQLite file
+(and optional Vercel Blob — already hit free limits on this project).
 """
 
 import os
@@ -14,8 +15,14 @@ from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 from db_path import resolve_database_path
+import db_conn
 
 DB_PATH = resolve_database_path()
+
+
+def using_turso():
+    return db_conn.turso_configured()
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS articles (
@@ -65,13 +72,8 @@ CREATE TABLE IF NOT EXISTS suppressed_articles (
 
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
+    with db_conn.connection(DB_PATH) as conn:
         yield conn
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def init_db():
@@ -83,22 +85,17 @@ def init_db():
             scrape_ingest.init_scrape_tables(conn)
         except Exception as exc:
             print(f"  [warning] scrape_targets init skipped: {exc}")
-        try:
-            conn.execute("ALTER TABLE articles ADD COLUMN fetched_at TEXT")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            conn.execute("ALTER TABLE articles ADD COLUMN image_url TEXT")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            conn.execute("ALTER TABLE articles ADD COLUMN title_key TEXT")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            conn.execute("ALTER TABLE articles ADD COLUMN resolved_url TEXT")
-        except sqlite3.OperationalError:
-            pass
+        for stmt in (
+            "ALTER TABLE articles ADD COLUMN fetched_at TEXT",
+            "ALTER TABLE articles ADD COLUMN image_url TEXT",
+            "ALTER TABLE articles ADD COLUMN title_key TEXT",
+            "ALTER TABLE articles ADD COLUMN resolved_url TEXT",
+        ):
+            try:
+                conn.execute(stmt)
+            except Exception as exc:
+                if not db_conn.is_duplicate_column_error(exc):
+                    raise
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS suppressed_articles (
@@ -123,16 +120,18 @@ def init_db():
                 "ON articles(title_key) "
                 "WHERE title_key IS NOT NULL AND title_key != '' AND duplicate_of IS NULL"
             )
-        except sqlite3.OperationalError:
-            pass
+        except Exception as exc:
+            if not db_conn.is_duplicate_column_error(exc):
+                print(f"  [warning] title_key index: {exc}")
         try:
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_articles_url "
                 "ON articles(url) "
                 "WHERE url IS NOT NULL AND url != '' AND duplicate_of IS NULL"
             )
-        except sqlite3.OperationalError:
-            pass
+        except Exception as exc:
+            if not db_conn.is_duplicate_column_error(exc):
+                print(f"  [warning] url index: {exc}")
         try:
             from subscribers import init_subscriber_tables
             init_subscriber_tables(conn)
@@ -537,7 +536,9 @@ def insert_articles(articles):
                     )
                 inserted += 1
                 inserted_ids.append(cur.lastrowid)
-            except sqlite3.IntegrityError:
+            except Exception as exc:
+                if not db_conn.is_integrity_error(exc):
+                    raise
                 if url:
                     existing = conn.execute(
                         """SELECT id FROM articles
@@ -575,7 +576,13 @@ def insert_articles(articles):
 
 
 def persist():
-    """Save SQLite to Vercel Blob after writes (no-op locally without token)."""
+    """Persist after writes.
+
+    Turso already stores data remotely — no Blob upload needed.
+    Local/Vercel file mode still uses Blob when configured.
+    """
+    if using_turso():
+        return True
     try:
         from db_persist import save_db, enabled
 
@@ -585,6 +592,38 @@ def persist():
     except Exception as exc:
         print(f"  [warning] database persist failed: {exc}")
         return False
+
+
+def storage_info():
+    """Human-facing storage backend summary for admin UI."""
+    if using_turso():
+        url = db_conn.turso_url()
+        host = url.split("//")[-1].split("/")[0] if url else "turso"
+        return {
+            "backend": "turso",
+            "durable": True,
+            "label": f"Turso Cloud ({host})",
+            "hint": "Durable remote SQLite — news survives Vercel cold starts without Blob.",
+            "turso_url_host": host,
+        }
+    from db_path import using_persistent_disk
+
+    if using_persistent_disk():
+        return {
+            "backend": "disk",
+            "durable": True,
+            "label": f"Persistent disk ({DB_PATH})",
+            "hint": "SQLite on attached disk survives restarts.",
+        }
+    return {
+        "backend": "ephemeral_or_blob",
+        "durable": False,
+        "label": f"Local/ephemeral ({DB_PATH})",
+        "hint": (
+            "Vercel /tmp is wiped on cold start. Prefer Turso "
+            "(TURSO_DATABASE_URL + TURSO_AUTH_TOKEN) — Blob free limits already failed once."
+        ),
+    }
 
 
 def get_unprocessed(limit=None, max_days=None, origins=None):

@@ -101,6 +101,19 @@ def _cron_allowed(authorization, user_agent, cron_schedule, admin_password):
 
 @app.on_event("startup")
 def on_startup():
+    # Turso is the durable store — skip Blob restore (Blob free limits already failed).
+    if database.using_turso():
+        database.init_db()
+        scrape_ingest.init_scrape_tables()
+        try:
+            seeded = scrape_ingest.seed_default_targets()
+            if seeded.get("added"):
+                print(f"[startup] seeded {seeded['added']} default scrape targets (Turso)")
+        except Exception as exc:
+            print(f"[startup] scrape seed skipped: {exc}")
+        print("[startup] using Turso durable database")
+        return
+
     # Persistent disk (Render/Railway) keeps SQLite across restarts — skip Blob restore.
     if not using_persistent_disk():
         restore_db(database.DB_PATH)
@@ -868,7 +881,34 @@ def feed_summary():
 
 @app.get("/api/auto-refresh/status")
 def auto_refresh_status():
-    return auto_refresh.refresh_status()
+    status = auto_refresh.refresh_status()
+    status["turso"] = database.using_turso()
+    status["storage"] = database.storage_info()
+    status["last_cron"] = {
+        "hourly": database.get_meta("last_cron_hourly"),
+        "metered": database.get_meta("last_cron_metered"),
+        "festive_intelligence": database.get_meta("last_cron_festive_intelligence"),
+        "scrape": database.get_meta("last_cron_scrape"),
+        "full": database.get_meta("last_cron_full"),
+    }
+    status["automation_note"] = (
+        "Hourly / 3h / 5h jobs are triggered by GitHub Actions using CRON_SECRET — "
+        "you do not need to open the website. Data stays in Turso when configured."
+        if database.using_turso()
+        else (
+            "Configure TURSO_DATABASE_URL + TURSO_AUTH_TOKEN so news survives cold starts. "
+            "GitHub Actions + CRON_SECRET run refreshes without opening the site."
+        )
+    )
+    return status
+
+
+def _mark_cron(name):
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0).isoformat() + "Z"
+    database.set_meta(f"last_cron_{name}", now)
+    return now
 
 
 @app.post("/api/auto-refresh")
@@ -887,13 +927,16 @@ def cron_refresh(
     x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
     x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
 ):
-    """Vercel Cron hits this daily to keep news current."""
+    """Vercel Cron / GitHub Actions — full refresh without opening the website."""
     if not _cron_allowed(
         authorization, user_agent, x_vercel_cron_schedule, x_admin_password
     ):
         raise HTTPException(401, "Unauthorized")
     try:
-        return auto_refresh.try_auto_refresh(force=True)
+        result = auto_refresh.try_auto_refresh(force=True)
+        result["cron_marked_at"] = _mark_cron("full")
+        result["turso"] = database.using_turso()
+        return result
     except Exception as exc:
         raise HTTPException(500, f"Cron refresh failed: {exc}") from exc
 
@@ -911,7 +954,9 @@ def cron_refresh_rss(
     ):
         raise HTTPException(401, "Unauthorized")
     try:
-        return auto_refresh.try_auto_refresh(force=True, rss_only=True)
+        result = auto_refresh.try_auto_refresh(force=True, rss_only=True)
+        result["cron_marked_at"] = _mark_cron("rss")
+        return result
     except Exception as exc:
         raise HTTPException(500, f"RSS cron failed: {exc}") from exc
 
@@ -943,6 +988,7 @@ def cron_refresh_hourly(
         classified = gemini.get("classified", 0)
         if gemini.get("error") or gemini.get("reason") == "no_gemini_key":
             summary = {**(summary or {}), "gemini": gemini}
+        marked = _mark_cron("hourly")
         return {
             "ok": True,
             "rss": summary,
@@ -951,6 +997,8 @@ def cron_refresh_hourly(
             "classified": classified,
             "festive_summary_only": True,
             "gemini": gemini,
+            "turso": database.using_turso(),
+            "cron_marked_at": marked,
             "message": (
                 f"Hourly refresh done — festive "
                 f"{festive.get('inserted', 0)} new / {festive.get('refreshed', 0)} updated, "
@@ -980,9 +1028,12 @@ def cron_refresh_metered(
             include_gnews=True,
             include_newsapi=True,
         )
+        marked = _mark_cron("metered")
         return {
             "ok": True,
             **summary,
+            "turso": database.using_turso(),
+            "cron_marked_at": marked,
             "message": (
                 f"Metered refresh done — inserted {summary.get('total_inserted', 0)}, "
                 f"updated {summary.get('total_refreshed', 0)}."
@@ -999,7 +1050,7 @@ def cron_festive_intelligence(
     x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
     x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
 ):
-    """Every ~5 hours: generate Festive Sale intelligence brief and email it."""
+    """Every ~5 hours: website+IG scrape, festive intelligence brief, email."""
     if not _cron_allowed(
         authorization, user_agent, x_vercel_cron_schedule, x_admin_password
     ):
@@ -1011,13 +1062,17 @@ def cron_festive_intelligence(
         retagged = database.reconcile_festive_sale_tags()
         festive_jobs.summarize_festive_only()
         result = festive_jobs.run_festive_intelligence_and_email(force=True)
+        marked = _mark_cron("festive_intelligence")
+        database.set_meta("last_cron_scrape", marked)
         return {
             "ok": True,
             "seeded": seeded,
             "scrape": scrape,
             "retagged": retagged,
+            "turso": database.using_turso(),
+            "cron_marked_at": marked,
             **result,
-            "message": "Festive intelligence cycle finished.",
+            "message": "Festive intelligence cycle finished (no website visit needed).",
         }
     except Exception as exc:
         raise HTTPException(500, f"Festive intelligence cron failed: {exc}") from exc
@@ -1065,28 +1120,32 @@ def cron_weekly_intelligence(
 
 @app.get("/api/admin/storage-status")
 def admin_storage_status(_: None = Depends(admin_auth.require_admin)):
-    """Check whether durable storage (disk or Blob) is configured and working."""
-    status = storage_status(database.DB_PATH)
-    status["relevant_articles"] = database.get_relevant_count()
-    status["total_articles"] = database.get_stats()["total"]
-    status["database_path"] = database.DB_PATH
-    status["persistent_disk"] = using_persistent_disk()
+    """Check durable storage (Turso preferred, else disk/Blob)."""
+    info = database.storage_info()
+    status = {
+        "backend": info["backend"],
+        "durable": info["durable"],
+        "label": info["label"],
+        "hint": info["hint"],
+        "database_path": database.DB_PATH,
+        "persistent_disk": using_persistent_disk(),
+        "turso": database.using_turso(),
+        "relevant_articles": database.get_relevant_count(),
+        "total_articles": database.get_stats()["total"],
+    }
+    if database.using_turso():
+        status["blob_configured"] = False
+        status["turso_host"] = info.get("turso_url_host")
+        return status
+
+    blob = storage_status(database.DB_PATH)
+    status.update(blob)
     if using_persistent_disk():
-        status["hint"] = (
-            f"Persistent disk active — SQLite at {database.DB_PATH} survives restarts "
-            "(Render/Railway). Blob backup is optional."
-        )
-    elif status["blob_configured"] and status["last_save_ok"]:
-        status["hint"] = "Blob save succeeded — your news is stored in the cloud."
-    elif status["blob_configured"] and status["last_save_error"]:
-        status["hint"] = f"Blob linked but last save failed: {status['last_save_error']}"
-    elif status["blob_configured"]:
-        status["hint"] = "Blob linked — refresh RSS or process Gemini once to save data."
-    else:
-        status["hint"] = (
-            "No durable storage. Prefer Render/Railway with a disk (PERSISTENT_DISK_PATH=/var/data), "
-            "or link Vercel Blob. Otherwise /tmp data is wiped on cold start."
-        )
+        status["hint"] = info["hint"]
+    elif status.get("blob_configured") and status.get("last_save_ok"):
+        status["hint"] = "Blob save succeeded — but Turso is safer than Blob free limits."
+    elif not status.get("blob_configured"):
+        status["hint"] = info["hint"]
     return status
 
 

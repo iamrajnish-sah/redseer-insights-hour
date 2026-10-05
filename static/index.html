@@ -1786,17 +1786,20 @@ async function loadStorageStatus() {
   try {
     const data = await (await adminFetch(API + "/api/admin/storage-status")).json();
     const hint = document.getElementById("emailHint");
-    if (data.persistent_disk) {
+    if (data.turso || data.backend === "turso") {
+      hint.textContent = `🗄 Turso durable DB OK · ${data.relevant_articles || 0} articles · ${data.label || data.turso_host || ""}`;
+      hint.style.color = "#059669";
+    } else if (data.persistent_disk) {
       hint.textContent = `💾 Persistent disk OK · ${data.relevant_articles || 0} articles · ${data.database_path || ""}`;
       hint.style.color = "#059669";
     } else if (data.blob_configured && data.last_save_ok) {
-      hint.textContent = `☁ Cloud save OK (${Math.round((data.local_db_bytes || 0) / 1024)} KB, ${data.relevant_articles || 0} articles)`;
-      hint.style.color = "#059669";
+      hint.textContent = `☁ Cloud save OK (${Math.round((data.local_db_bytes || 0) / 1024)} KB, ${data.relevant_articles || 0} articles) — prefer Turso to avoid Blob free-limit wipes`;
+      hint.style.color = "#b45309";
     } else if (data.blob_configured) {
       hint.textContent = data.hint || "Blob linked — use Restore from Cloud or Save to Cloud.";
       hint.style.color = "#b45309";
     } else {
-      hint.textContent = data.hint || "⚠ No durable DB — deploy on Render/Railway with a disk.";
+      hint.textContent = data.hint || "⚠ No durable DB — add TURSO_DATABASE_URL + TURSO_AUTH_TOKEN on Vercel.";
       hint.style.color = "#dc2626";
     }
   } catch (_) {}

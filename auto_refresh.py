@@ -144,6 +144,9 @@ def refresh_status():
 def _persist():
     from db_persist import save_db, enabled
 
+    # Turso already persists remotely — skip Blob file uploads.
+    if database.using_turso():
+        return True
     if not enabled():
         return False
     return save_db(database.DB_PATH)

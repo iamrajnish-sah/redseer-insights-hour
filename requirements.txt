@@ -10,4 +10,5 @@ python-multipart
 pypdf
 python-docx
 openpyxl
+libsql
 vercel>=0.0.8
