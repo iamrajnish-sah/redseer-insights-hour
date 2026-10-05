@@ -113,3 +113,38 @@ curl -H "Authorization: Bearer YOUR_CRON_SECRET" \
 3. **Run festive sites**. Results appear in the **Website scrape news** box.  
 4. When `APIFY_TOKEN` is set, **Run all IG** → **Instagram scrape news** box + Excel.  
 5. Leave the site — GitHub Actions keeps refreshing in the background.
+
+### How to know data is on Turso
+
+Open: https://redseer-insights-hour.vercel.app/api/health
+
+You want:
+
+- `"turso_configured": true`
+- `"db_driver": "http"`
+- `"turso_ping": "ok"`
+- `"article_count":` a rising number after refresh
+
+Also in Backend Management the green line should say:  
+`Turso durable DB OK · N articles · Turso Cloud (….turso.io)`
+
+If that line is green and count goes up after **Refresh All Sources**, news is storing in Turso.
+
+---
+
+## 6) Instagram / Apify token (for IG scrape)
+
+1. Create a free Apify account: https://console.apify.com/sign-up  
+2. Get your API token: https://console.apify.com/settings/integrations  
+   (or Account → Integrations → API tokens)
+3. Vercel → project **redseer-insights-hour** → **Settings → Environment Variables**
+4. Add:
+
+| Name | Value |
+|---|---|
+| `APIFY_TOKEN` | paste the Apify API token |
+
+5. **Redeploy**
+6. Backend → Load default IG list (if needed) → **Run all IG**  
+   Posts appear in **Instagram scrape news** + Excel download.  
+   Hint should turn green: `Apify ready · …`
