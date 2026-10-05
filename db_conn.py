@@ -226,8 +226,9 @@ class HttpLibsqlCursor:
 class HttpLibsqlConnection:
     """sqlite3-like wrapper around libsql_client HTTP ClientSync."""
 
-    def __init__(self, client):
+    def __init__(self, client, shared=False):
         self._client = client
+        self._shared = shared
         self.backend = "turso"
 
     def execute(self, sql, params=()):
@@ -266,6 +267,9 @@ class HttpLibsqlConnection:
         return None
 
     def close(self):
+        # Shared process-level clients must stay open across requests.
+        if self._shared:
+            return None
         try:
             self._client.close()
         except Exception:
@@ -364,35 +368,59 @@ _HTTP_CLIENT_URL = None
 _HTTP_CLIENT_TOKEN = None
 
 
-def _connect_turso_http(url, token):
+def _reset_http_client():
+    global _HTTP_CLIENT, _HTTP_CLIENT_URL, _HTTP_CLIENT_TOKEN
+    client = _HTTP_CLIENT
+    _HTTP_CLIENT = None
+    _HTTP_CLIENT_URL = None
+    _HTTP_CLIENT_TOKEN = None
+    if client is not None:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def _http_client_usable(client):
+    if client is None:
+        return False
+    if getattr(client, "closed", False):
+        return False
+    return True
+
+
+def _connect_turso_http(url, token, *, force_new=False):
     """Prefer HTTPS HTTP client — works on Vercel serverless."""
     global _HTTP_CLIENT, _HTTP_CLIENT_URL, _HTTP_CLIENT_TOKEN
     from libsql_client import create_client_sync
 
     http_url = turso_http_url(url)
     if (
-        _HTTP_CLIENT is not None
+        not force_new
+        and _http_client_usable(_HTTP_CLIENT)
         and _HTTP_CLIENT_URL == http_url
         and _HTTP_CLIENT_TOKEN == token
-        and not getattr(_HTTP_CLIENT, "closed", False)
     ):
-        conn = HttpLibsqlConnection(_HTTP_CLIENT)
-        return conn
+        return HttpLibsqlConnection(_HTTP_CLIENT, shared=True)
+
+    if force_new or not _http_client_usable(_HTTP_CLIENT):
+        _reset_http_client()
 
     client = create_client_sync(url=http_url, auth_token=token)
-    conn = HttpLibsqlConnection(client)
-    row = conn.execute("SELECT 1 AS ok").fetchone()
-    if not row or row["ok"] != 1:
+    conn = HttpLibsqlConnection(client, shared=True)
+    try:
+        row = conn.execute("SELECT 1 AS ok").fetchone()
+        if not row or row["ok"] != 1:
+            raise RuntimeError("Turso HTTP ping failed")
+    except Exception:
         try:
             client.close()
         except Exception:
             pass
-        raise RuntimeError("Turso HTTP ping failed")
+        raise
     _HTTP_CLIENT = client
     _HTTP_CLIENT_URL = http_url
     _HTTP_CLIENT_TOKEN = token
-    # Don't close the shared client when the wrapper closes.
-    conn.close = lambda: None  # type: ignore[method-assign]
     return conn
 
 
@@ -459,6 +487,17 @@ def connect(db_path=None):
                 print(f"[db] Turso connected via HTTPS ({turso_http_url(url)})")
                 return conn
             except Exception as exc:
+                text = str(exc).lower()
+                if "client_closed" in text or "client is closed" in text:
+                    try:
+                        print("[db] Turso HTTP client was closed — reconnecting")
+                        conn = _connect_turso_http(url, token, force_new=True)
+                        LAST_ERROR = None
+                        LAST_DRIVER = "http"
+                        return conn
+                    except Exception as retry_exc:
+                        errors.append(f"http-retry: {retry_exc}")
+                        print(f"[db] Turso HTTP reconnect failed: {retry_exc}")
                 errors.append(f"http: {exc}")
                 print(f"[db] Turso HTTP connect failed: {exc}")
 
