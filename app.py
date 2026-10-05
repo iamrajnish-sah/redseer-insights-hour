@@ -1159,7 +1159,8 @@ def cron_weekly_intelligence(
         authorization, user_agent, x_vercel_cron_schedule, x_admin_password
     ):
         raise HTTPException(401, "Unauthorized")
-    restore_db(database.DB_PATH)
+    if not database.using_turso():
+        restore_db(database.DB_PATH)
     try:
         result = email_digest.send_weekly_intelligence_emails()
     except LookupError as exc:
@@ -1183,16 +1184,33 @@ def admin_storage_status(_: None = Depends(admin_auth.require_admin)):
         "turso": database.using_turso(),
         "relevant_articles": database.get_relevant_count(),
         "total_articles": database.get_stats()["total"],
+        "blob_actions_enabled": False,
     }
     if database.using_turso():
         status["blob_configured"] = False
+        status["blob_actions_enabled"] = False
         status["turso_host"] = info.get("turso_url_host")
+        status["connected"] = info.get("connected")
+        status["db_driver"] = info.get("db_driver") or db_conn.LAST_DRIVER
+        status["db_error"] = info.get("db_error") or db_conn.LAST_ERROR
+        if info.get("connected"):
+            status["hint"] = (
+                "Turso is already durable — Save/Restore Cloud (Blob) is disabled. "
+                "Your Blob store was suspended; leave it off."
+            )
+        else:
+            status["hint"] = info.get("hint") or (
+                "Turso env is set but not connected — check /api/health and redeploy "
+                "after libsql packages are installed."
+            )
         return status
 
     blob = storage_status(database.DB_PATH)
     status.update(blob)
+    status["blob_actions_enabled"] = bool(status.get("blob_configured"))
     if using_persistent_disk():
         status["hint"] = info["hint"]
+        status["blob_actions_enabled"] = False
     elif status.get("blob_configured") and status.get("last_save_ok"):
         status["hint"] = "Blob save succeeded — but Turso is safer than Blob free limits."
     elif not status.get("blob_configured"):
@@ -1267,21 +1285,39 @@ def admin_seed_scrape_defaults(_: None = Depends(admin_auth.require_admin)):
 
 @app.post("/api/admin/restore-db")
 def admin_restore_db(_: None = Depends(admin_auth.require_admin)):
-    """Restore SQLite from Vercel Blob (recovers newspaper uploads after cold start)."""
+    """Restore SQLite from Vercel Blob (legacy). Not needed when Turso is configured."""
+    if database.using_turso():
+        count = database.get_relevant_count()
+        return {
+            "ok": True,
+            "skipped": True,
+            "turso": True,
+            "message": (
+                "Already on Turso — no Blob restore needed. "
+                f"Your {count} articles are already in the durable Turso database."
+            ),
+            "relevant_articles": count,
+        }
     if not enabled():
         raise HTTPException(
             400,
-            "Blob not configured on this Vercel project — in Vercel go to Storage → "
-            "your Blob store → Connect to Project, then add BLOB_STORE_ID + BLOB_READ_WRITE_TOKEN and redeploy.",
+            "Blob is not available. Prefer Turso: set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN on Vercel. "
+            "Blob free limits already suspended this project's store.",
         )
     ok = restore_db(database.DB_PATH, force=True)
     database.init_db()
     status = storage_status(database.DB_PATH)
     if not ok and not status.get("local_db_bytes", 0):
+        err = status.get("last_save_error") or ""
+        if "store_suspended" in err.lower() or "suspended" in err.lower():
+            raise HTTPException(
+                400,
+                "Vercel Blob store is suspended (free limit). "
+                "Use Turso instead — do not click Restore from Cloud.",
+            )
         raise HTTPException(
             400,
-            status.get("last_save_error")
-            or "Could not restore — check BLOB_STORE_ID and BLOB_READ_WRITE_TOKEN on Vercel",
+            err or "Could not restore from Blob. Prefer Turso durable DB.",
         )
     return {
         "ok": ok,
@@ -1293,11 +1329,35 @@ def admin_restore_db(_: None = Depends(admin_auth.require_admin)):
 
 @app.post("/api/admin/persist-db")
 def admin_persist_db(force: bool = False, _: None = Depends(admin_auth.require_admin)):
-    """Force-save the database to Vercel Blob (for testing persistence)."""
+    """Force-save the database to Vercel Blob (legacy). Not needed when Turso is configured."""
+    if database.using_turso():
+        count = database.get_relevant_count()
+        return {
+            "ok": True,
+            "skipped": True,
+            "turso": True,
+            "message": (
+                "Already on Turso — every write is already durable. "
+                "Save to Cloud (Blob) is disabled because the Blob store was suspended."
+            ),
+            "relevant_articles": count,
+        }
+    if not enabled():
+        raise HTTPException(
+            400,
+            "Blob is not available. Prefer Turso: set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN on Vercel.",
+        )
     ok = save_db(database.DB_PATH, force=force)
     status = storage_status(database.DB_PATH)
     if not ok:
-        raise HTTPException(400, status.get("last_save_error") or "Blob save failed")
+        err = status.get("last_save_error") or "Blob save failed"
+        if "store_suspended" in str(err).lower() or "suspended" in str(err).lower():
+            raise HTTPException(
+                400,
+                "Vercel Blob store is suspended (free limit hit earlier). "
+                "Switch to Turso — do not use Save to Cloud.",
+            )
+        raise HTTPException(400, err)
     return {"ok": True, **status, "message": "Database saved to Vercel Blob."}
 
 
@@ -1392,7 +1452,7 @@ def refresh_rss(_: None = Depends(admin_auth.require_admin)):
         )
         if errors:
             msg += f" {len(errors)} feed(s) failed: {errors[0]}"
-        save_db(database.DB_PATH)
+        database.persist()
         return {
             "fetched": stats["fetched"],
             "matched": stats["matched"],
@@ -1435,7 +1495,7 @@ def refresh_newsapi(_: None = Depends(admin_auth.require_admin)):
             msg = f"NewsAPI returned no articles. {'; '.join(errors[:2])}"
         elif errors:
             msg += f" {len(errors)} sector query had errors."
-        save_db(database.DB_PATH)
+        database.persist()
         return {
             "fetched": stats["fetched"],
             "raw_from_api": stats.get("raw_from_api", stats["fetched"]),
@@ -1502,7 +1562,7 @@ def refresh_gnews(_: None = Depends(admin_auth.require_admin)):
                 msg += " Daily GNews quota used — resets at midnight UTC."
             else:
                 msg += f" {len(errors)} sector query failed."
-        save_db(database.DB_PATH)
+        database.persist()
         return {
             "fetched": stats["fetched"],
             "raw_from_api": raw_from_api,
@@ -1578,7 +1638,7 @@ def process_unprocessed(_: None = Depends(admin_auth.require_admin)):
                 "Check GEMINIAPIKEY and try again."
             )
 
-        save_db(database.DB_PATH)
+        database.persist()
         return {
             "classified": len(results),
             "relevant": relevant_count,

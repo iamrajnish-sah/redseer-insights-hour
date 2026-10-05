@@ -10,8 +10,13 @@ dependencies = [
     "google-genai>=1.0.0",
     "certifi>=2024.0.0",
     "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
     "python-multipart>=0.0.9",
     "pypdf>=4.0.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "libsql>=0.1.11",
+    "libsql-client>=0.3.1",
     "vercel>=0.0.8",
 ]
 

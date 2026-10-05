@@ -605,12 +605,33 @@ def storage_info():
     if using_turso():
         url = db_conn.turso_url()
         host = url.split("//")[-1].split("/")[0] if url else "turso"
+        driver = getattr(db_conn, "LAST_DRIVER", None)
+        err = getattr(db_conn, "LAST_ERROR", None)
+        connected = driver in ("http", "native", "embedded") and not err
+        if connected:
+            return {
+                "backend": "turso",
+                "durable": True,
+                "connected": True,
+                "db_driver": driver,
+                "label": f"Turso Cloud ({host})",
+                "hint": "Durable remote SQLite — news survives Vercel cold starts without Blob.",
+                "turso_url_host": host,
+            }
+        # Env is set but the live connection failed / fell back to local.
         return {
-            "backend": "turso",
-            "durable": True,
-            "label": f"Turso Cloud ({host})",
-            "hint": "Durable remote SQLite — news survives Vercel cold starts without Blob.",
+            "backend": "turso_fallback",
+            "durable": False,
+            "connected": False,
+            "db_driver": driver,
+            "label": f"Turso configured but not connected ({host})",
+            "hint": (
+                err
+                or "Turso env is set but the app could not connect. "
+                "Check that libsql / libsql-client are installed and the token is valid."
+            ),
             "turso_url_host": host,
+            "db_error": err,
         }
     from db_path import using_persistent_disk
 
@@ -618,12 +639,14 @@ def storage_info():
         return {
             "backend": "disk",
             "durable": True,
+            "connected": True,
             "label": f"Persistent disk ({DB_PATH})",
             "hint": "SQLite on attached disk survives restarts.",
         }
     return {
         "backend": "ephemeral_or_blob",
         "durable": False,
+        "connected": True,
         "label": f"Local/ephemeral ({DB_PATH})",
         "hint": (
             "Vercel /tmp is wiped on cold start. Prefer Turso "
