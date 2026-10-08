@@ -443,8 +443,8 @@ def fetch_sector_articles(sector, start_date, end_date):
     for row in rows:
         item = dict(row)
         origin = (item.get("origin") or "").lower()
-        # Scrape hubs only — never feed Instagram / website scrape into intelligence briefs.
-        if origin in ("instagram", "website_scrape"):
+        # Instagram stays in its hub — website scrape + news feed festive insights.
+        if origin == "instagram":
             continue
         item["sectors"] = normalize_sector_tags(json.loads(item.get("sectors") or "[]"))
         if sector not in item["sectors"]:

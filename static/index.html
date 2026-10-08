@@ -1147,7 +1147,7 @@
     <div class="scrape-boxes" id="scrapeBoxes">
       <div class="scrape-box" id="websiteScrapeBox">
         <h3>Website scraping</h3>
-        <p>Only <strong>festive sale + related players</strong> are kept. Results fill the <strong>Website scrape news</strong> box above the main feed (and Festive Sale tab).</p>
+        <p>Only <strong>festive sale + related players</strong> are kept. Results appear in the <strong>Festive Sale</strong> tab (like E-commerce) and the Website scrape box — Instagram stays separate.</p>
         <div class="scrape-form">
           <input class="form-input" id="websiteScrapeUrl" type="url" placeholder="https://brand.com/sale">
           <input class="form-input" id="websiteScrapeLabel" type="text" placeholder="Label (optional)">
@@ -1224,7 +1224,7 @@
         <button class="btn btn-teal btn-sm" type="button" id="btnFestiveWeeklyInsights" onclick="generateFestiveInsights('weekly')">✦ Weekly insights</button>
         <a class="btn btn-ghost btn-sm" href="/intelligence">Calendar date range →</a>
       </div>
-      <p class="scrape-meta" id="festiveInsightsNote">Daily / weekly shortcuts here, or open Intelligence Hub and pick any from/to dates on the calendar.</p>
+      <p class="scrape-meta" id="festiveInsightsNote">Festive insights use news + website scrape (not Instagram). Daily/weekly here, or open Intelligence Hub for any calendar range.</p>
       <div class="intel-strip" id="festiveStrip"></div>
     </div>
   </section>
@@ -1233,7 +1233,7 @@
     <section class="panel panel-intel panel-scrape-results is-open" id="websiteResultsHub">
       <button type="button" class="intel-hub-toggle" id="websiteResultsToggle" aria-expanded="true" onclick="toggleScrapeResultsHub('website')">
         <span class="intel-hub-kicker">Website scrape news</span>
-        <span class="intel-hub-hint" id="websiteResultsHint">News pulled from tracked research sites & newsrooms</span>
+        <span class="intel-hub-hint" id="websiteResultsHint">Also shown under Festive Sale tab for insights</span>
         <span class="intel-hub-chevron" aria-hidden="true">▾</span>
       </button>
       <div class="intel-hub-body" id="websiteResultsBody">
@@ -1907,13 +1907,13 @@ async function loadWebsiteScrapeNews() {
     const articles = (data && data.articles) || [];
     if (hint) {
       hint.textContent = articles.length
-        ? `${articles.length} website scrape item${articles.length === 1 ? "" : "s"} · festive / player only`
+        ? `${articles.length} website scrape item${articles.length === 1 ? "" : "s"} · also in Festive Sale tab`
         : "Run festive sites in Backend Management to fill this box";
     }
     wrap.innerHTML = renderScrapeResultCards(
       articles,
       "No website scrape news yet",
-      "Open Backend Management → Run festive sites. Matching research/newsroom links will appear here."
+      "Open Backend Management → Run festive sites. Matching links appear here and under the Festive Sale tab."
     );
   } catch (_) {
     wrap.innerHTML = "";
@@ -2129,7 +2129,7 @@ async function runScrapeTarget(id) {
     const data = await readJson(resp);
     if (!resp.ok) throw new Error(data.detail || data.error || "Scrape failed");
     setStatus(
-      `Done — ${data.fetched || 0} festive items · ${data.inserted || 0} new · ${data.refreshed || 0} updated. See the scrape boxes above the news.`
+      `Done — ${data.fetched || 0} festive items · ${data.inserted || 0} new · ${data.refreshed || 0} updated. Open the Festive Sale tab.`
     );
     await loadScrapeTargets();
     await loadFestiveSaleNews();
@@ -2143,8 +2143,8 @@ async function runScrapeTarget(id) {
 async function runScrapeKind(kind) {
   setStatus(
     kind === "website"
-      ? "Scraping festive sale pages only… results appear in the Website scrape news box"
-      : "Scraping festive Instagram posts… results appear in the Instagram scrape news box"
+      ? "Scraping festive sale pages… results go to Festive Sale tab + Website scrape box"
+      : "Scraping Instagram… results stay in the Instagram scrape box only"
   );
   try {
     const resp = await adminFetch(API + "/api/admin/scrape/run", {
@@ -2154,7 +2154,9 @@ async function runScrapeKind(kind) {
     });
     const data = await readJson(resp);
     if (!resp.ok) throw new Error(data.detail || "Scrape failed");
-    const boxName = kind === "instagram" ? "Instagram scrape news box" : "Website scrape news box";
+    const boxName = kind === "instagram"
+      ? "Instagram scrape box"
+      : "Festive Sale tab + Website scrape box";
     const msg = data.message
       ? `${data.message} → ${boxName}`
       : (
@@ -2352,10 +2354,10 @@ async function loadArticles() {
   articlesCache.forEach((a) => {
     if (!Array.isArray(a.sectors)) a.sectors = [];
   });
-  // Never show Instagram / website scrape rows in the main grid (hubs only).
+  // Never show Instagram in the main grid (Instagram hub only). Website scrape stays in Festive Sale.
   articlesCache = articlesCache.filter((a) => {
     const origin = (a.origin || "").toLowerCase();
-    return origin !== "instagram" && origin !== "website_scrape";
+    return origin !== "instagram";
   });
   renderLimit = RENDER_PAGE;
   updateTabCounts();
@@ -2495,7 +2497,7 @@ function renderArticles() {
   const loadMoreWrap = document.getElementById("loadMoreWrap");
   let list = articlesCache.filter((a) => {
     const origin = (a.origin || "").toLowerCase();
-    return origin !== "instagram" && origin !== "website_scrape";
+    return origin !== "instagram";
   });
   if (currentSector) {
     list = list.filter(a =>
