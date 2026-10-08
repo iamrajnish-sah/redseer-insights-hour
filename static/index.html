@@ -778,13 +778,13 @@
   }
   .scrape-boxes {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 14px;
     margin-top: 14px;
   }
   .scrape-results-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 14px;
     margin: 14px 0 8px;
   }
@@ -801,8 +801,33 @@
     border-color: #f9a8d4;
     background: linear-gradient(180deg, #fdf2f8 0%, #ffffff 55%);
   }
+  .panel-scrape-results.panel-linkedin {
+    border-color: #93c5fd;
+    background: linear-gradient(180deg, #eff6ff 0%, #ffffff 55%);
+  }
   .panel-scrape-results .intel-hub-kicker { color: #b45309; }
   .panel-instagram .intel-hub-kicker { color: #be185d; }
+  .panel-linkedin .intel-hub-kicker { color: #1d4ed8; }
+  .scrape-box.scrape-box-linkedin {
+    border-color: #bfdbfe;
+    background: linear-gradient(180deg, #f8fbff 0%, #ffffff 70%);
+  }
+  .scrape-box-linkedin h3 { color: #1d4ed8; }
+  .linkedin-term-list {
+    margin: 0 0 10px;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .linkedin-term-list li {
+    font-size: 0.72rem;
+    color: #1e3a8a;
+    background: #dbeafe;
+    border-radius: 4px;
+    padding: 3px 7px;
+  }
   .scrape-result-actions {
     display: flex;
     flex-wrap: wrap;
@@ -1168,6 +1193,25 @@
         <ul class="scrape-target-list" id="instagramTargetList"></ul>
         <div class="scrape-meta" id="apifyHint">Apify status: checking…</div>
       </div>
+      <div class="scrape-box scrape-box-linkedin" id="linkedinScrapeBox">
+        <h3>LinkedIn festive discovery</h3>
+        <p>Separate from RSS / GNews / NewsAPI. Free Google News RSS (<code>site:linkedin.com</code>) finds data-rich festive posts — does <strong>not</strong> burn paid news quotas.</p>
+        <p><strong>Platforms:</strong> Flipkart · Amazon · Meesho · Myntra · Ajio</p>
+        <ul class="linkedin-term-list" aria-label="Insight terminology">
+          <li>GMV / orders</li>
+          <li>AOV</li>
+          <li>YoY growth</li>
+          <li>crore / %</li>
+          <li>market share</li>
+          <li>festive barometer</li>
+          <li>BBD / GIF / Diwali</li>
+          <li>outlook / insight</li>
+        </ul>
+        <div class="scrape-form">
+          <button class="btn btn-primary btn-sm" type="button" onclick="runLinkedInFestiveDiscovery()">Run LinkedIn discovery</button>
+        </div>
+        <div class="scrape-meta" id="linkedinScrapeHint">Results → LinkedIn box + Festive Sale tab (not main news quotas)</div>
+      </div>
     </div>
   </section>
 
@@ -1224,7 +1268,7 @@
         <button class="btn btn-teal btn-sm" type="button" id="btnFestiveWeeklyInsights" onclick="generateFestiveInsights('weekly')">✦ Weekly insights</button>
         <a class="btn btn-ghost btn-sm" href="/intelligence">Calendar date range →</a>
       </div>
-      <p class="scrape-meta" id="festiveInsightsNote">Festive insights use news + website scrape (not Instagram). Daily/weekly here, or open Intelligence Hub for any calendar range.</p>
+      <p class="scrape-meta" id="festiveInsightsNote">Festive insights use news + website scrape + LinkedIn discovery (not Instagram). Daily/weekly here, or open Intelligence Hub for any calendar range.</p>
       <div class="intel-strip" id="festiveStrip"></div>
     </div>
   </section>
@@ -1257,6 +1301,22 @@
         </div>
         <p class="scrape-meta" id="instagramExcelNote">Excel matches Flipkart IG Posts layout (one sheet per handle: #, Date/Time IST, Posted By, metrics, Open post / View image). Run all IG repeatedly so every handle rotates in.</p>
         <div class="intel-strip" id="instagramResultsStrip"></div>
+      </div>
+    </section>
+
+    <section class="panel panel-intel panel-scrape-results panel-linkedin is-open" id="linkedinResultsHub">
+      <button type="button" class="intel-hub-toggle" id="linkedinResultsToggle" aria-expanded="true" onclick="toggleScrapeResultsHub('linkedin')">
+        <span class="intel-hub-kicker">LinkedIn festive insights</span>
+        <span class="intel-hub-hint" id="linkedinResultsHint">GMV · orders · AOV · YoY · festive barometer · BBD/GIF</span>
+        <span class="intel-hub-chevron" aria-hidden="true">▾</span>
+      </button>
+      <div class="intel-hub-body" id="linkedinResultsBody">
+        <div class="scrape-result-actions">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="loadLinkedInScrapeNews()">↻ Refresh</button>
+          <button class="btn btn-primary btn-sm" type="button" onclick="runLinkedInFestiveDiscovery()">Run discovery</button>
+        </div>
+        <p class="scrape-meta" id="linkedinResultsNote">Looks for Flipkart / Amazon / Meesho / Myntra / Ajio LinkedIn posts with festive sale metrics (GMV, orders, crore, YoY, market share, barometer). Separate box; also feeds Festive Sale insights. Free RSS — not GNews/NewsAPI.</p>
+        <div class="intel-strip" id="linkedinResultsStrip"></div>
       </div>
     </section>
   </div>
@@ -1496,6 +1556,7 @@ async function init() {
     loadFestiveSaleNews(),
     loadWebsiteScrapeNews(),
     loadInstagramScrapeNews(),
+    loadLinkedInScrapeNews(),
   ]).finally(() => {
     maybeAutoRefresh();
   });
@@ -1791,10 +1852,14 @@ async function loadFestiveSaleNews() {
 }
 
 function toggleScrapeResultsHub(kind) {
-  const hubId = kind === "instagram" ? "instagramResultsHub" : "websiteResultsHub";
-  const btnId = kind === "instagram" ? "instagramResultsToggle" : "websiteResultsToggle";
-  const hub = document.getElementById(hubId);
-  const btn = document.getElementById(btnId);
+  const map = {
+    website: ["websiteResultsHub", "websiteResultsToggle"],
+    instagram: ["instagramResultsHub", "instagramResultsToggle"],
+    linkedin: ["linkedinResultsHub", "linkedinResultsToggle"],
+  };
+  const ids = map[kind] || map.website;
+  const hub = document.getElementById(ids[0]);
+  const btn = document.getElementById(ids[1]);
   if (!hub || !btn) return;
   const open = !hub.classList.contains("is-open");
   hub.classList.toggle("is-open", open);
@@ -1943,6 +2008,31 @@ async function loadInstagramScrapeNews() {
   } catch (_) {
     wrap.innerHTML = "";
     if (hint) hint.textContent = "Posts from tracked brand handles · Excel export ready";
+  }
+}
+
+async function loadLinkedInScrapeNews() {
+  const wrap = document.getElementById("linkedinResultsStrip");
+  const hint = document.getElementById("linkedinResultsHint");
+  const note = document.getElementById("linkedinResultsNote");
+  if (!wrap) return;
+  try {
+    const data = await (await fetch(API + "/api/scrape/linkedin?days=30&limit=36")).json();
+    const articles = (data && data.articles) || [];
+    if (hint) {
+      hint.textContent = articles.length
+        ? `${articles.length} LinkedIn insight${articles.length === 1 ? "" : "s"} · also in Festive Sale tab`
+        : "Run LinkedIn discovery — GMV / orders / festive barometer posts";
+    }
+    if (note && data.terminology_note) note.textContent = data.terminology_note;
+    wrap.innerHTML = renderScrapeResultCards(
+      articles,
+      "No LinkedIn festive insights yet",
+      "Open Backend Management → Run LinkedIn discovery. Filters for Flipkart/Amazon/Meesho/Myntra/Ajio posts with GMV, orders, AOV, YoY, crore, market share, festive barometer."
+    );
+  } catch (_) {
+    wrap.innerHTML = "";
+    if (hint) hint.textContent = "GMV · orders · AOV · YoY · festive barometer · BBD/GIF";
   }
 }
 
@@ -2110,9 +2200,14 @@ function showFestiveSaleResults(kind) {
     hub.classList.add("is-open");
     if (btn) btn.setAttribute("aria-expanded", "true");
   }
-  const preferIg = kind === "instagram";
-  const resultHub = document.getElementById(preferIg ? "instagramResultsHub" : "websiteResultsHub");
-  const resultBtn = document.getElementById(preferIg ? "instagramResultsToggle" : "websiteResultsToggle");
+  const hubMap = {
+    instagram: ["instagramResultsHub", "instagramResultsToggle"],
+    linkedin: ["linkedinResultsHub", "linkedinResultsToggle"],
+    website: ["websiteResultsHub", "websiteResultsToggle"],
+  };
+  const pair = hubMap[kind] || hubMap.website;
+  const resultHub = document.getElementById(pair[0]);
+  const resultBtn = document.getElementById(pair[1]);
   if (resultHub) {
     resultHub.classList.add("is-open");
     if (resultBtn) resultBtn.setAttribute("aria-expanded", "true");
@@ -2135,12 +2230,39 @@ async function runScrapeTarget(id) {
     await loadFestiveSaleNews();
     await loadWebsiteScrapeNews();
     await loadInstagramScrapeNews();
+    await loadLinkedInScrapeNews();
     showFestiveSaleResults(data.kind);
     await loadArticles();
   } catch (e) { setStatus(e.message, true); }
 }
 
+async function runLinkedInFestiveDiscovery() {
+  setStatus("Discovering festive LinkedIn insight posts (free RSS — no GNews quota)…");
+  const hint = document.getElementById("linkedinScrapeHint");
+  try {
+    const resp = await adminFetch(API + "/api/admin/scrape/linkedin/run", { method: "POST" });
+    const data = await readJson(resp);
+    if (!resp.ok) throw new Error(data.detail || data.error || "LinkedIn discovery failed");
+    const msg = data.message
+      || `LinkedIn festive discovery — ${data.fetched || 0} posts · ${data.inserted || 0} new`;
+    setStatus(msg);
+    if (hint) hint.textContent = msg;
+    showToast(msg);
+    await loadFestiveSaleNews();
+    await loadLinkedInScrapeNews();
+    showFestiveSaleResults("linkedin");
+    await loadArticles();
+  } catch (e) {
+    const err = e.message || String(e);
+    if (hint) hint.textContent = err;
+    setStatus(err, true);
+  }
+}
+
 async function runScrapeKind(kind) {
+  if (kind === "linkedin") {
+    return runLinkedInFestiveDiscovery();
+  }
   setStatus(
     kind === "website"
       ? "Scraping festive sale pages… results go to Festive Sale tab + Website scrape box"
@@ -2168,18 +2290,20 @@ async function runScrapeKind(kind) {
     await loadFestiveSaleNews();
     await loadWebsiteScrapeNews();
     await loadInstagramScrapeNews();
+    await loadLinkedInScrapeNews();
     showFestiveSaleResults(kind);
     await loadArticles();
   } catch (e) {
     const err = e.message || String(e);
     if (/timeout|timed out|failed to fetch|network/i.test(err)) {
       setStatus(
-        "Scrape timed out — refresh and check the Website / Instagram scrape boxes above the news; partial results may already be saved.",
+        "Scrape timed out — refresh and check the Website / Instagram / LinkedIn scrape boxes above the news; partial results may already be saved.",
         true
       );
       await loadFestiveSaleNews();
       await loadWebsiteScrapeNews();
       await loadInstagramScrapeNews();
+      await loadLinkedInScrapeNews();
       showFestiveSaleResults(kind);
       await loadArticles();
     } else {

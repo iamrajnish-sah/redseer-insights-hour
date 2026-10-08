@@ -39,6 +39,7 @@ import intelligence_hub
 import admin_auth
 import auto_refresh
 import scrape_ingest
+import linkedin_ingest
 import festive_jobs
 import report_export
 import scrape_export
@@ -916,7 +917,7 @@ def get_articles(sector: str = None, pub_date: str = None, search: str = None, d
 
 @app.get("/api/festive-sale")
 def get_festive_sale_news(days: int = 30, limit: int = 24):
-    """Festive Sale strip — includes website scrape + news; never Instagram."""
+    """Festive Sale strip — includes website/LinkedIn scrape + news; never Instagram."""
     days = max(1, min(int(days or 30), 90))
     limit = max(1, min(int(limit or 24), 60))
     rows = database.get_relevant_articles(sector="festive_sale", days=days)
@@ -988,6 +989,29 @@ def get_instagram_scrape_news(days: int = 30, limit: int = 36):
             "metrics, Open post / View image hyperlinks). One sheet per Instagram handle. "
             "Filter with ?handle=flipkart&start_date=&end_date=."
         ),
+    }
+
+
+@app.get("/api/scrape/linkedin")
+def get_linkedin_scrape_news(days: int = 30, limit: int = 36):
+    """Dedicated box: festive LinkedIn insight posts (free Google News RSS discovery)."""
+    rows = database.get_scrape_articles("linkedin_scrape", days=days, limit=limit)
+    articles = [_row_to_dict(row) for row in rows]
+    status = linkedin_ingest.status_summary()
+    return {
+        "label": "LinkedIn festive insights",
+        "origin": "linkedin_scrape",
+        "days": max(1, min(int(days or 30), 90)),
+        "count": len(articles),
+        "articles": articles,
+        "method": status.get("method"),
+        "uses_gnews_api": False,
+        "terminology_note": (
+            "Discovery filters for Flipkart / Amazon / Meesho / Myntra / Ajio posts mentioning "
+            "festive sale signals (BBD, GIF, Diwali, festive barometer) plus insight metrics "
+            "(GMV, orders, AOV, YoY, crore, market share). Does not use GNews/NewsAPI quotas."
+        ),
+        **{k: status[k] for k in ("platforms", "note") if k in status},
     }
 
 
@@ -1300,7 +1324,7 @@ def cron_festive_intelligence(
     x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
     x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
 ):
-    """Every ~5 hours: website+IG scrape, festive intelligence brief, email."""
+    """Every ~5 hours: website+IG+LinkedIn scrape, festive intelligence brief, email."""
     if not _cron_allowed(
         authorization, user_agent, x_vercel_cron_schedule, x_admin_password
     ):
@@ -1309,6 +1333,8 @@ def cron_festive_intelligence(
         seeded = scrape_ingest.seed_default_targets()
         # Pull scrape targets first so new site/IG posts enter the brief
         scrape = scrape_ingest.run_all_enabled()
+        # Free LinkedIn festive discovery (Google News RSS) — no GNews/NewsAPI quota.
+        linkedin = linkedin_ingest.fetch_festive_linkedin()
         retagged = database.reconcile_festive_sale_tags()
         festive_jobs.summarize_festive_only()
         result = festive_jobs.run_festive_intelligence_and_email(force=True)
@@ -1318,6 +1344,7 @@ def cron_festive_intelligence(
             "ok": True,
             "seeded": seeded,
             "scrape": scrape,
+            "linkedin": linkedin,
             "retagged": retagged,
             "turso": database.using_turso(),
             "cron_marked_at": marked,
@@ -1336,7 +1363,7 @@ def cron_scrape_targets(
     x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
     kind: str = None,
 ):
-    """Run enabled scrape targets. kind=website|instagram|None(all, websites then IG)."""
+    """Run scrape targets. kind=website|instagram|linkedin|None(all: sites → IG → LinkedIn)."""
     if not _cron_allowed(
         authorization, user_agent, x_vercel_cron_schedule, x_admin_password
     ):
@@ -1347,24 +1374,41 @@ def cron_scrape_targets(
     try:
         scrape_ingest.seed_default_targets()
         kind = (kind or "").strip().lower() or None
+        if kind == "linkedin":
+            linkedin = linkedin_ingest.fetch_festive_linkedin()
+            marked = _mark_cron("scrape")
+            return {"ok": True, "kind": "linkedin", "cron_marked_at": marked, **linkedin}
         if kind in ("website", "instagram"):
             result = scrape_ingest.run_all_enabled(kind=kind)
             marked = _mark_cron("scrape")
             return {"ok": True, "kind": kind, "cron_marked_at": marked, **result}
-        # Default: websites first (fast), then Instagram round-robin batch.
+        # Default: websites first (fast), Instagram round-robin, then LinkedIn discovery.
         websites = scrape_ingest.run_all_enabled(kind="website")
         instagram = scrape_ingest.run_all_enabled(kind="instagram")
+        linkedin = linkedin_ingest.fetch_festive_linkedin()
         marked = _mark_cron("scrape")
+        inserted = (
+            int(websites.get("inserted") or 0)
+            + int(instagram.get("inserted") or 0)
+            + int(linkedin.get("inserted") or 0)
+        )
+        refreshed = (
+            int(websites.get("refreshed") or 0)
+            + int(instagram.get("refreshed") or 0)
+            + int(linkedin.get("refreshed") or 0)
+        )
         return {
             "ok": True,
-            "kind": "website+instagram",
+            "kind": "website+instagram+linkedin",
             "cron_marked_at": marked,
             "website": websites,
             "instagram": instagram,
-            "inserted": int(websites.get("inserted") or 0) + int(instagram.get("inserted") or 0),
-            "refreshed": int(websites.get("refreshed") or 0) + int(instagram.get("refreshed") or 0),
+            "linkedin": linkedin,
+            "inserted": inserted,
+            "refreshed": refreshed,
             "message": (
-                f"Websites: {websites.get('message')} · Instagram: {instagram.get('message')}"
+                f"Websites: {websites.get('message')} · Instagram: {instagram.get('message')} · "
+                f"LinkedIn: {linkedin.get('message')}"
             ),
         }
     except Exception as exc:
@@ -1506,7 +1550,24 @@ async def admin_run_scrape_all(
         kind = (body or {}).get("kind")
     except Exception:
         kind = None
+    kind_norm = (kind or "").strip().lower() if kind else None
+    if kind_norm == "linkedin":
+        return linkedin_ingest.fetch_festive_linkedin()
     return scrape_ingest.run_all_enabled(kind=kind)
+
+
+@app.post("/api/admin/scrape/linkedin/run")
+def admin_run_linkedin_scrape(_: None = Depends(admin_auth.require_admin)):
+    """Run festive LinkedIn discovery (free Google News RSS; no GNews/NewsAPI)."""
+    try:
+        return linkedin_ingest.fetch_festive_linkedin()
+    except Exception as exc:
+        raise HTTPException(500, f"LinkedIn festive discovery failed: {exc}") from exc
+
+
+@app.get("/api/admin/scrape/linkedin/status")
+def admin_linkedin_scrape_status(_: None = Depends(admin_auth.require_admin)):
+    return linkedin_ingest.status_summary()
 
 
 @app.post("/api/admin/scrape/seed-defaults")

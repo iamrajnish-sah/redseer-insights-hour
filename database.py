@@ -938,7 +938,7 @@ def get_scrape_articles(
     end_date=None,
     profile_handle=None,
 ):
-    """Website / Instagram scrape cards for the dedicated result boxes."""
+    """Website / Instagram / LinkedIn scrape cards for the dedicated result boxes."""
     days = max(1, min(int(days or 30), 90))
     limit = max(1, min(int(limit or 40), 500))
     rows = get_relevant_articles(
