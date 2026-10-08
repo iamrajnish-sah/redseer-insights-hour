@@ -907,7 +907,8 @@ def get_articles(sector: str = None, pub_date: str = None, search: str = None, d
     for r in rows:
         item = _row_to_dict(r)
         origin = (item.get("origin") or "").lower()
-        if origin in ("instagram", "website_scrape"):
+        # Instagram stays in the Instagram hub only.
+        if origin == "instagram":
             continue
         articles.append(item)
     return articles
@@ -915,7 +916,7 @@ def get_articles(sector: str = None, pub_date: str = None, search: str = None, d
 
 @app.get("/api/festive-sale")
 def get_festive_sale_news(days: int = 30, limit: int = 24):
-    """Public viewer strip for the Festive Sale sector (never Instagram / website scrape)."""
+    """Festive Sale strip — includes website scrape + news; never Instagram."""
     days = max(1, min(int(days or 30), 90))
     limit = max(1, min(int(limit or 24), 60))
     rows = database.get_relevant_articles(sector="festive_sale", days=days)
@@ -923,7 +924,7 @@ def get_festive_sale_news(days: int = 30, limit: int = 24):
     for row in rows:
         item = _row_to_dict(row)
         origin = (item.get("origin") or "").lower()
-        if origin in ("instagram", "website_scrape"):
+        if origin == "instagram":
             continue
         articles.append(item)
         if len(articles) >= limit:
@@ -937,7 +938,7 @@ def get_festive_sale_news(days: int = 30, limit: int = 24):
                 continue
             item = _row_to_dict(row)
             origin = (item.get("origin") or "").lower()
-            if origin in ("instagram", "website_scrape"):
+            if origin == "instagram":
                 continue
             if is_festive_sale_relevant(
                 item.get("title") or "",

@@ -33,9 +33,10 @@ def festive_candidate_rows(limit=12):
         body = row["body"] or ""
         subtitle = row["subtitle"] or ""
         origin = (row["origin"] or "").lower()
-        if origin in ("instagram", "website_scrape"):
+        # Instagram is hub-only; website scrape + festive news go into summaries/insights.
+        if origin == "instagram":
             continue
-        if origin in ("festive_sale",):
+        if origin in ("website_scrape", "festive_sale"):
             festive.append(row)
             continue
         if is_festive_sale_relevant(title, body, subtitle):

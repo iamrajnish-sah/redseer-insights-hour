@@ -904,8 +904,8 @@ def get_relevant_articles(
         query += " AND origin = ?"
         params.append(origin)
     else:
-        # Instagram (and website scrape) live only in their dedicated hubs — not main cards.
-        query += " AND (origin IS NULL OR origin NOT IN ('instagram', 'website_scrape'))"
+        # Instagram stays in its dedicated hub only — website scrape feeds Festive Sale / main tabs.
+        query += " AND (origin IS NULL OR origin NOT IN ('instagram'))"
     if sector:
         if sector == "cross_sector":
             query += " AND (sectors LIKE ? OR sectors LIKE ?)"

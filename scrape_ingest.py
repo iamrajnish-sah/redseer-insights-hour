@@ -843,9 +843,9 @@ def run_all_enabled(kind=None):
         "batch_limit": max_batch,
         "festive_only": kind != KIND_INSTAGRAM,
         "results_location": (
-            "Instagram scrape box (Excel export)"
+            "Instagram scrape box only (Excel export)"
             if kind == KIND_INSTAGRAM
-            else "Website scrape box + Festive Sale tab"
+            else "Festive Sale tab + Website scrape box"
         ),
         "results": results,
         "apify_configured": apify_configured(),
