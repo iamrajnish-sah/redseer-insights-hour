@@ -37,7 +37,8 @@ Copy `.env.example` to `.env`. Important variables:
 | `GEMINIAPIKEY` | News classification (festive hourly summaries) |
 | `INTELLIGENCE_GEMINI_API_KEY` | Intelligence Hub briefs (second Gemini key) |
 | `NEWSAPIKEY` / `GNEWSAPIKEY` | Metered news APIs |
-| `APIFY_TOKEN` | Instagram scraping via Apify |
+| `APIFY_TOKEN` | Instagram scraping via Apify (also powers LinkedIn post search fallback) |
+| `SGAI_API_KEY` | Optional — ScrapeGraphAI Search for **fresh** LinkedIn festive posts (preferred over RSS) |
 | `SMTP_*` / `EMAIL_FROM` | Email digests |
 | `PERSISTENT_DISK_PATH` | e.g. `/var/data` on Render |
 | `APP_BASE_URL` | Public URL for email links + GitHub Actions |
@@ -55,10 +56,11 @@ Wire GitHub → Settings → Secrets: `APP_BASE_URL`, `CRON_SECRET`. Workflow: `
 
 ## Scraping (Backend Management)
 
-Two boxes appear after you unlock Backend Management:
+Three boxes appear after you unlock Backend Management:
 
 1. **Website scraping** — paste a sale/brand page URL; matching festive/sale links are ingested into Festive Sale.
 2. **Instagram scraping** — paste `@handle` or profile URL; requires free `APIFY_TOKEN`.
+3. **LinkedIn festive discovery** — set `SGAI_API_KEY` (ScrapeGraphAI, best) and/or reuse `APIFY_TOKEN` for LinkedIn post search (`postedLimit=week`). Does **not** use NewsAPI/GNews. Google News RSS is last resort and drops posts older than `LINKEDIN_MAX_AGE_DAYS` (default 14).
 
 Targets are stored in SQLite and re-run on the festive intelligence cron.
 

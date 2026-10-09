@@ -1195,7 +1195,7 @@
       </div>
       <div class="scrape-box scrape-box-linkedin" id="linkedinScrapeBox">
         <h3>LinkedIn festive discovery</h3>
-        <p>Separate from RSS / GNews / NewsAPI. Free Google News RSS (<code>site:linkedin.com</code>) finds data-rich festive posts — does <strong>not</strong> burn paid news quotas.</p>
+        <p>Fresh LinkedIn posts only (≤14 days). Prefers <strong>ScrapeGraphAI</strong> (<code>SGAI_API_KEY</code>) or <strong>Apify LinkedIn search</strong> (reuse <code>APIFY_TOKEN</code>). RSS is last resort. Never uses NewsAPI / GNews.</p>
         <p><strong>Platforms:</strong> Flipkart · Amazon · Meesho · Myntra · Ajio</p>
         <ul class="linkedin-term-list" aria-label="Insight terminology">
           <li>GMV / orders</li>
@@ -1210,7 +1210,7 @@
         <div class="scrape-form">
           <button class="btn btn-primary btn-sm" type="button" onclick="runLinkedInFestiveDiscovery()">Run LinkedIn discovery</button>
         </div>
-        <div class="scrape-meta" id="linkedinScrapeHint">Results → LinkedIn box + Festive Sale tab (not main news quotas)</div>
+        <div class="scrape-meta" id="linkedinScrapeHint">Add SGAI_API_KEY (best) or APIFY_TOKEN → LinkedIn box + Festive Sale tab</div>
       </div>
     </div>
   </section>
@@ -2015,20 +2015,29 @@ async function loadLinkedInScrapeNews() {
   const wrap = document.getElementById("linkedinResultsStrip");
   const hint = document.getElementById("linkedinResultsHint");
   const note = document.getElementById("linkedinResultsNote");
+  const backendHint = document.getElementById("linkedinScrapeHint");
   if (!wrap) return;
   try {
-    const data = await (await fetch(API + "/api/scrape/linkedin?days=30&limit=36")).json();
+    const data = await (await fetch(API + "/api/scrape/linkedin?limit=36")).json();
     const articles = (data && data.articles) || [];
+    const age = data.max_age_days || 14;
+    const providers = (data.providers || []).join(" → ") || "rss";
     if (hint) {
       hint.textContent = articles.length
-        ? `${articles.length} LinkedIn insight${articles.length === 1 ? "" : "s"} · also in Festive Sale tab`
-        : "Run LinkedIn discovery — GMV / orders / festive barometer posts";
+        ? `${articles.length} fresh LinkedIn insight${articles.length === 1 ? "" : "s"} (≤${age}d) · Festive Sale tab`
+        : `No fresh posts (≤${age}d) — set SGAI_API_KEY or APIFY_TOKEN, then Run discovery`;
     }
     if (note && data.terminology_note) note.textContent = data.terminology_note;
+    if (backendHint) {
+      const sg = data.scrapegraph_configured ? "ScrapeGraphAI ready" : "SGAI_API_KEY missing";
+      const ap = data.apify_configured ? "Apify ready" : "APIFY_TOKEN missing";
+      backendHint.textContent = `${sg} · ${ap} · providers: ${providers} · NewsAPI untouched`;
+      backendHint.style.color = (data.scrapegraph_configured || data.apify_configured) ? "#059669" : "#b45309";
+    }
     wrap.innerHTML = renderScrapeResultCards(
       articles,
-      "No LinkedIn festive insights yet",
-      "Open Backend Management → Run LinkedIn discovery. Filters for Flipkart/Amazon/Meesho/Myntra/Ajio posts with GMV, orders, AOV, YoY, crore, market share, festive barometer."
+      "No fresh LinkedIn festive insights yet",
+      "Add SGAI_API_KEY (ScrapeGraphAI) or APIFY_TOKEN (LinkedIn post search), then Run discovery. Only posts within the freshness window are kept — old Google News hits are dropped."
     );
   } catch (_) {
     wrap.innerHTML = "";
