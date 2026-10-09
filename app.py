@@ -993,23 +993,32 @@ def get_instagram_scrape_news(days: int = 30, limit: int = 36):
 
 
 @app.get("/api/scrape/linkedin")
-def get_linkedin_scrape_news(days: int = 30, limit: int = 36):
-    """Dedicated box: festive LinkedIn insight posts (free Google News RSS discovery)."""
+def get_linkedin_scrape_news(days: int = None, limit: int = 36):
+    """Dedicated box: recent festive LinkedIn insights (ScrapeGraphAI / Apify / fresh RSS)."""
+    # Default to LinkedIn freshness window so stale RSS leftovers don't dominate the box.
+    default_days = linkedin_ingest.max_age_days()
+    days = max(1, min(int(days if days is not None else default_days), 90))
     rows = database.get_scrape_articles("linkedin_scrape", days=days, limit=limit)
     articles = [_row_to_dict(row) for row in rows]
     status = linkedin_ingest.status_summary()
     return {
         "label": "LinkedIn festive insights",
         "origin": "linkedin_scrape",
-        "days": max(1, min(int(days or 30), 90)),
+        "days": days,
         "count": len(articles),
         "articles": articles,
         "method": status.get("method"),
+        "providers": status.get("providers"),
+        "scrapegraph_configured": status.get("scrapegraph_configured"),
+        "apify_configured": status.get("apify_configured"),
         "uses_gnews_api": False,
+        "uses_newsapi": False,
+        "max_age_days": status.get("max_age_days"),
         "terminology_note": (
-            "Discovery filters for Flipkart / Amazon / Meesho / Myntra / Ajio posts mentioning "
-            "festive sale signals (BBD, GIF, Diwali, festive barometer) plus insight metrics "
-            "(GMV, orders, AOV, YoY, crore, market share). Does not use GNews/NewsAPI quotas."
+            "Recent Flipkart / Amazon / Meesho / Myntra / Ajio LinkedIn posts with festive signals "
+            "(BBD, GIF, Diwali, festive barometer) and metrics (GMV, orders, AOV, YoY, crore). "
+            "Prefers ScrapeGraphAI (SGAI_API_KEY) or Apify LinkedIn search (APIFY_TOKEN); "
+            "RSS is last-resort. Does not use GNews/NewsAPI quotas."
         ),
         **{k: status[k] for k in ("platforms", "note") if k in status},
     }

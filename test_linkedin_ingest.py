@@ -1,6 +1,9 @@
-"""Unit tests for LinkedIn festive discovery scoring (no network)."""
+"""Unit tests for LinkedIn festive discovery scoring + freshness (no network)."""
 
-from linkedin_ingest import quality_score, _looks_like_linkedin
+from datetime import date, timedelta
+
+import linkedin_ingest
+from linkedin_ingest import quality_score, _looks_like_linkedin, _is_fresh, _max_age_days
 
 
 def test_keeps_festive_gmv_insight():
@@ -28,10 +31,34 @@ def test_rejects_non_platform():
         "Festive barometer shows strong GMV growth YoY",
         "India ecommerce outlook with crore in orders",
     )
-    assert q["keep"] is False  # no Flipkart/Amazon/Meesho/Myntra/Ajio
+    assert q["keep"] is False
+
+
+def test_relax_keeps_platform_festive_without_metrics():
+    q = quality_score(
+        "Amazon Great Indian Festival is live — festive season kickoff",
+        "Team notes on shopping festival plans",
+        relax=True,
+    )
+    assert q["keep"] is True
 
 
 def test_linkedin_url_detection():
     assert _looks_like_linkedin("https://www.linkedin.com/posts/abc", "Title", "")
     assert _looks_like_linkedin("https://news.google.com/rss/...", "Story - LinkedIn", "")
     assert not _looks_like_linkedin("https://example.com/news", "Generic retail sale", "")
+
+
+def test_freshness_window():
+    today = date.today().isoformat()
+    old = (date.today() - timedelta(days=_max_age_days() + 5)).isoformat()
+    assert _is_fresh(today) is True
+    assert _is_fresh(old) is False
+    assert _is_fresh("") is False
+
+
+def test_status_never_uses_news_apis():
+    status = linkedin_ingest.status_summary()
+    assert status["uses_gnews_api"] is False
+    assert status["uses_newsapi"] is False
+    assert "max_age_days" in status
