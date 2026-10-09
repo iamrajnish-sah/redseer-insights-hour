@@ -70,7 +70,7 @@ CREATE INDEX IF NOT EXISTS idx_intelligence_sector_dates
 ON intelligence_reports(sector, start_date, end_date);
 """
 
-SYSTEM_PROMPT = """You are a senior strategy consultant at Redseer writing a WEEKLY \
+SYSTEM_PROMPT = """You are a senior strategy consultant writing a WEEKLY \
 India-focused sector intelligence brief for executives.
 
 You receive a SMALL set of already-processed article summaries (not full articles) \
@@ -109,7 +109,7 @@ Rules:
 - No markdown fences, no preamble.
 """
 
-MERGE_PROMPT = """You are merging partial Redseer WEEKLY intelligence reports for the same \
+MERGE_PROMPT = """You are merging partial WEEKLY intelligence reports for the same \
 sector and week into ONE final consultant brief.
 
 Return ONLY valid JSON with the same schema as a full report. Keep each item's summary as \
@@ -586,7 +586,7 @@ def generate_report_json(sector, start_date, end_date, articles):
 def report_to_markdown(sector, start_date, end_date, report, articles=None):
     label = SECTOR_LABELS.get(sector, sector)
     lines = [
-        f"# Redseer Intelligence Hub — {label}",
+        f"# Insights Hour — Intelligence Hub — {label}",
         f"**Period:** {period_label(start_date, end_date)}",
         "",
         "## Executive Summary",

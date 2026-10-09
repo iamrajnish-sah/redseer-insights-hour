@@ -71,7 +71,7 @@ h1,h2,h3 {{ font-family: 'Segoe UI', Arial, sans-serif; color: #1e3a5f; }}
 @media print {{ .no-print {{ display: none; }} }}
 </style></head><body>
 <button class="no-print" onclick="window.print()">Print / Save as PDF</button>
-<h1>Redseer Intelligence — {html_escape(str(label))}</h1>
+<h1>Insights Hour — {html_escape(str(label))}</h1>
 <p class="meta">{html_escape(str(period))}</p>
 <h2>Executive Summary</h2>
 <div class="summary">{exec_summary}</div>
@@ -97,7 +97,7 @@ def report_to_docx_bytes(report_row):
     )
 
     doc = Document()
-    doc.add_heading(f"Redseer Intelligence — {label}", level=1)
+    doc.add_heading(f"Insights Hour — {label}", level=1)
     doc.add_paragraph(str(period))
     doc.add_heading("Executive Summary", level=2)
     doc.add_paragraph((payload.get("executive_summary") or "").strip() or "No summary.")

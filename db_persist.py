@@ -34,7 +34,7 @@ def _oidc_token():
 
 
 def _pathname():
-    return os.environ.get("DATABASE_BLOB_PATH", "redseer-insight-hour/news.db")
+    return os.environ.get("DATABASE_BLOB_PATH", "insights-hour/news.db")
 
 
 def _store_id():

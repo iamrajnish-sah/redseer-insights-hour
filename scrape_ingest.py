@@ -225,7 +225,7 @@ FESTIVE_PLAYERS = tuple(
     list(FESTIVE_SALE_PLATFORM_MARKERS)
     + [
         "shopsy", "spoyl", "amazon india", "flipkart minutes", "ajio",
-        "redseer", "datum", "unicommerce", "bain", "bcg", "kantar",
+        "datum", "unicommerce", "bain", "bcg", "kantar",
         "gokwik", "shiprocket", "eternal", "nykaa", "reliance",
     ]
 )

@@ -54,7 +54,7 @@ from sector_keywords import (
     is_festive_sale_relevant,
 )
 
-app = FastAPI(title="Redseer Insight Hour")
+app = FastAPI(title="Insights Hour")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -454,7 +454,7 @@ def api_unsubscribe(token: str = Query(...)):
         raise HTTPException(400, str(exc)) from exc
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Unsubscribed — Redseer Insight Hour</title>
+<title>Unsubscribed — Insights Hour</title>
 <style>
 body {{ font-family: Arial, sans-serif; background:#f1f5f9; margin:0; padding:40px 16px; }}
 .card {{ max-width:520px; margin:0 auto; background:#fff; border-radius:14px; padding:32px; box-shadow:0 8px 24px rgba(15,23,42,.08); }}

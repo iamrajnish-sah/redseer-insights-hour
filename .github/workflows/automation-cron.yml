@@ -1,6 +1,6 @@
 # Sub-daily automation (Vercel Hobby cannot run hourly crons).
 # Required repo secrets (MUST match Vercel env):
-#   APP_BASE_URL  — https://redseer-insights-hour.vercel.app  (no trailing slash)
+#   APP_BASE_URL  — your Insights Hour public URL (no trailing slash)
 #   CRON_SECRET   — EXACT same value as CRON_SECRET on the Vercel app
 # Also set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN on Vercel so data survives cold starts.
 #

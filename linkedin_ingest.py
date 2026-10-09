@@ -101,7 +101,7 @@ LOW_SIGNAL = (
 )
 
 USER_AGENT = (
-    "Mozilla/5.0 (compatible; RedseerInsightHour/1.0; +https://redseer.com)"
+    "Mozilla/5.0 (compatible; InsightsHour/1.0)"
 )
 
 # Short LinkedIn-native style queries (Apify / ScrapeGraph) — fresher than news indexes.
