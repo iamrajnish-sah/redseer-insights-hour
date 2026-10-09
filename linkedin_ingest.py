@@ -10,7 +10,7 @@ Providers (first match wins unless LINKEDIN_PROVIDERS lists several):
 
 Does NOT call GNews.io or NewsAPI — those quotas stay for the main news pipeline.
 
-Stores matches as origin=linkedin_scrape with festive_sale sector.
+Stores matches as origin=linkedin_scrape (LinkedIn hub only — not Festive Sale / main feed).
 """
 
 from __future__ import annotations
@@ -329,7 +329,8 @@ def _make_article(
         resolved_url=url or None,
         page="linkedin",
         image_url=image_url,
-        sectors=["festive_sale"],
+        # Hub-only sector (mirrors Instagram) — never festive_sale / main feed.
+        sectors=["linkedin_monitoring"],
         pre_classified=True,
         auto_summary=make_summary(title, full_body),
         scrape_meta=meta,
@@ -882,7 +883,7 @@ def fetch_festive_linkedin(max_per_query: int = None) -> dict:
             f"LinkedIn festive discovery — {len(collected)} fresh insight posts "
             f"(≤{_max_age_days()}d) via {providers_note} "
             f"({inserted} new, {len(refreshed)} updated). "
-            "Shown in LinkedIn box + Festive Sale tab. NewsAPI/GNews untouched."
+            "Shown in the LinkedIn box only (not Festive Sale / main feed). NewsAPI/GNews untouched."
         ),
         "terminology": {
             "platforms": list(PLATFORMS),
