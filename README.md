@@ -60,7 +60,7 @@ Three boxes appear after you unlock Backend Management:
 
 1. **Website scraping** — paste a sale/brand page URL; matching festive/sale links are ingested into Festive Sale.
 2. **Instagram scraping** — paste `@handle` or profile URL; requires free `APIFY_TOKEN`.
-3. **LinkedIn festive discovery** — set `SGAI_API_KEY` (ScrapeGraphAI, best) and/or reuse `APIFY_TOKEN` for LinkedIn post search (`postedLimit=week`). Does **not** use NewsAPI/GNews. Google News RSS is last resort and drops posts older than `LINKEDIN_MAX_AGE_DAYS` (default 14).
+3. **LinkedIn festive discovery** — set `SGAI_API_KEY` (ScrapeGraphAI, best) and/or reuse `APIFY_TOKEN` for LinkedIn post search (`postedLimit=week`). Results stay in the **LinkedIn hub only** (like Instagram — not Festive Sale / main feed). Does **not** use NewsAPI/GNews.
 
 Targets are stored in SQLite and re-run on the festive intelligence cron.
 

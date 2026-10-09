@@ -1195,7 +1195,7 @@
       </div>
       <div class="scrape-box scrape-box-linkedin" id="linkedinScrapeBox">
         <h3>LinkedIn festive discovery</h3>
-        <p>Fresh LinkedIn posts only (≤14 days). Prefers <strong>ScrapeGraphAI</strong> (<code>SGAI_API_KEY</code>) or <strong>Apify LinkedIn search</strong> (reuse <code>APIFY_TOKEN</code>). RSS is last resort. Never uses NewsAPI / GNews.</p>
+        <p>Fresh LinkedIn posts only (≤14 days). Results stay in the <strong>LinkedIn box</strong> (like Instagram) — not Festive Sale or the main feed. Prefers <strong>ScrapeGraphAI</strong> / <strong>Apify</strong>; never uses NewsAPI / GNews.</p>
         <p><strong>Platforms:</strong> Flipkart · Amazon · Meesho · Myntra · Ajio</p>
         <ul class="linkedin-term-list" aria-label="Insight terminology">
           <li>GMV / orders</li>
@@ -1268,7 +1268,7 @@
         <button class="btn btn-teal btn-sm" type="button" id="btnFestiveWeeklyInsights" onclick="generateFestiveInsights('weekly')">✦ Weekly insights</button>
         <a class="btn btn-ghost btn-sm" href="/intelligence">Calendar date range →</a>
       </div>
-      <p class="scrape-meta" id="festiveInsightsNote">Festive insights use news + website scrape + LinkedIn discovery (not Instagram). Daily/weekly here, or open Intelligence Hub for any calendar range.</p>
+      <p class="scrape-meta" id="festiveInsightsNote">Festive insights use news + website scrape (not Instagram or LinkedIn). Daily/weekly here, or open Intelligence Hub for any calendar range.</p>
       <div class="intel-strip" id="festiveStrip"></div>
     </div>
   </section>
@@ -1315,7 +1315,7 @@
           <button class="btn btn-ghost btn-sm" type="button" onclick="loadLinkedInScrapeNews()">↻ Refresh</button>
           <button class="btn btn-primary btn-sm" type="button" onclick="runLinkedInFestiveDiscovery()">Run discovery</button>
         </div>
-        <p class="scrape-meta" id="linkedinResultsNote">Looks for Flipkart / Amazon / Meesho / Myntra / Ajio LinkedIn posts with festive sale metrics (GMV, orders, crore, YoY, market share, barometer). Separate box; also feeds Festive Sale insights. Free RSS — not GNews/NewsAPI.</p>
+        <p class="scrape-meta" id="linkedinResultsNote">Looks for Flipkart / Amazon / Meesho / Myntra / Ajio LinkedIn posts with festive metrics (GMV, orders, crore, YoY, market share, barometer). Hub-only like Instagram — never Festive Sale or main feed. Not GNews/NewsAPI.</p>
         <div class="intel-strip" id="linkedinResultsStrip"></div>
       </div>
     </section>
@@ -2024,20 +2024,20 @@ async function loadLinkedInScrapeNews() {
     const providers = (data.providers || []).join(" → ") || "rss";
     if (hint) {
       hint.textContent = articles.length
-        ? `${articles.length} fresh LinkedIn insight${articles.length === 1 ? "" : "s"} (≤${age}d) · Festive Sale tab`
+        ? `${articles.length} fresh LinkedIn insight${articles.length === 1 ? "" : "s"} (≤${age}d) · LinkedIn hub only`
         : `No fresh posts (≤${age}d) — set SGAI_API_KEY or APIFY_TOKEN, then Run discovery`;
     }
     if (note && data.terminology_note) note.textContent = data.terminology_note;
     if (backendHint) {
       const sg = data.scrapegraph_configured ? "ScrapeGraphAI ready" : "SGAI_API_KEY missing";
       const ap = data.apify_configured ? "Apify ready" : "APIFY_TOKEN missing";
-      backendHint.textContent = `${sg} · ${ap} · providers: ${providers} · NewsAPI untouched`;
+      backendHint.textContent = `${sg} · ${ap} · providers: ${providers} · LinkedIn hub only · NewsAPI untouched`;
       backendHint.style.color = (data.scrapegraph_configured || data.apify_configured) ? "#059669" : "#b45309";
     }
     wrap.innerHTML = renderScrapeResultCards(
       articles,
       "No fresh LinkedIn festive insights yet",
-      "Add SGAI_API_KEY (ScrapeGraphAI) or APIFY_TOKEN (LinkedIn post search), then Run discovery. Only posts within the freshness window are kept — old Google News hits are dropped."
+      "Add SGAI_API_KEY or APIFY_TOKEN, then Run discovery. Posts stay in this LinkedIn box only — never Festive Sale or the main feed."
     );
   } catch (_) {
     wrap.innerHTML = "";
@@ -2487,10 +2487,10 @@ async function loadArticles() {
   articlesCache.forEach((a) => {
     if (!Array.isArray(a.sectors)) a.sectors = [];
   });
-  // Never show Instagram in the main grid (Instagram hub only). Website scrape stays in Festive Sale.
+  // Never show Instagram / LinkedIn in the main grid (hub-only). Website scrape stays in Festive Sale.
   articlesCache = articlesCache.filter((a) => {
     const origin = (a.origin || "").toLowerCase();
-    return origin !== "instagram";
+    return origin !== "instagram" && origin !== "linkedin_scrape";
   });
   renderLimit = RENDER_PAGE;
   updateTabCounts();
@@ -2630,7 +2630,7 @@ function renderArticles() {
   const loadMoreWrap = document.getElementById("loadMoreWrap");
   let list = articlesCache.filter((a) => {
     const origin = (a.origin || "").toLowerCase();
-    return origin !== "instagram";
+    return origin !== "instagram" && origin !== "linkedin_scrape";
   });
   if (currentSector) {
     list = list.filter(a =>
