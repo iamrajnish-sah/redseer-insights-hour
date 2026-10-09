@@ -12,7 +12,7 @@ name: Automation cron
 on:
   schedule:
     - cron: "5 * * * *"       # hourly: RSS + festive summarize
-    - cron: "25 * * * *"      # hourly: website + Instagram round-robin scrape
+    - cron: "25 * * * *"      # hourly: website + Instagram + LinkedIn festive discovery
     - cron: "20 */3 * * *"    # every ~3h: metered NewsAPI + GNews
     - cron: "35 */5 * * *"    # every ~5h: festive intelligence + email
   workflow_dispatch:
@@ -81,7 +81,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.job == 'scrape')
     runs-on: ubuntu-latest
     steps:
-      - name: Website + Instagram round-robin scrape
+      - name: Website + Instagram + LinkedIn festive scrape
         env:
           APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -91,7 +91,7 @@ jobs:
             echo "::error::Missing GitHub secrets APP_BASE_URL and/or CRON_SECRET."
             exit 1
           fi
-          # Websites first (fast), then Instagram-only round-robin via query.
+          # Websites → Instagram round-robin → LinkedIn festive discovery (free RSS).
           code=$(curl -sS -o /tmp/cron-scrape.json -w "%{http_code}" -X GET \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "User-Agent: github-actions-cron" \
