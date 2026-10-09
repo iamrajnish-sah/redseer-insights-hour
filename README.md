@@ -1,4 +1,4 @@
-# Redseer Insight Hour
+# Insights Hour
 
 Daily sector intelligence dashboard for India — curated news by sector with email digests, festive-sale automation, and optional website/Instagram scraping.
 

@@ -1,4 +1,4 @@
-# Redseer Insight Hour — one-command start (loads .env, auto-reloads on code changes)
+# Insights Hour — one-command start (loads .env, auto-reloads on code changes)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
@@ -19,7 +19,7 @@ if (Test-Path $envFile) {
 }
 
 Write-Host ""
-Write-Host "Redseer Insight Hour starting at http://localhost:8000" -ForegroundColor Cyan
+Write-Host "Insights Hour starting at http://localhost:8000" -ForegroundColor Cyan
 Write-Host "- Code/HTML changes reload automatically (watch this window)." -ForegroundColor DarkGray
 Write-Host "- Browser: press F5 to refresh the page." -ForegroundColor DarkGray
 Write-Host "- Stop server: Ctrl+C" -ForegroundColor DarkGray

@@ -20,7 +20,7 @@ import database
 import subscribers
 from sector_keywords import SECTOR_LABELS, normalize_sector_tags
 
-PRODUCT_NAME = "Redseer Insight Hour"
+PRODUCT_NAME = "Insights Hour"
 RECIPIENTS_FILE = Path(__file__).parent / "sector_recipients.json"
 
 

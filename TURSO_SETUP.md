@@ -13,12 +13,12 @@ Automation (news + website scrape + Instagram) runs via **GitHub Actions + CRON_
 ## 1) Create free Turso database (2 minutes)
 
 1. Open https://turso.tech and sign up / log in (GitHub login is fine).
-2. Create a database, e.g. name: `redseer-insights`.
+2. Create a database, e.g. name: `insights-hour`.
 3. Open the database → copy **both** of these from the Turso dashboard (not from this chat):
 
 | What | Example of a **real** value (yours will differ) |
 |---|---|
-| **Database URL** | `libsql://redseer-insights-rajnish.aws-ap-south-1.turso.io` |
+| **Database URL** | `libsql://insights-hour-xxxx.aws-ap-south-1.turso.io` |
 | **Auth Token** | a long string like `eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9…` (Create Token if needed) |
 
 **Do not** paste the placeholder text from any guide:
@@ -33,7 +33,7 @@ Those fake values crash the site with `500 FUNCTION_INVOCATION_FAILED`.
 
 ## 2) Add Turso to Vercel (keep same site URL)
 
-1. Vercel → your project **redseer-insights-hour** → **Settings → Environment Variables**
+1. Vercel → your project **Insights Hour** → **Settings → Environment Variables**
 2. Add for Production (and Preview if you want):
 
 | Name | Value |
@@ -46,7 +46,7 @@ Those fake values crash the site with `500 FUNCTION_INVOCATION_FAILED`.
 
 ### Quick check after redeploy
 
-Open: https://redseer-insights-hour.vercel.app/api/health
+Open: https://YOUR-INSIGHTS-HOUR.vercel.app/api/health
 
 You want:
 
@@ -77,7 +77,7 @@ GitHub → repo → **Settings → Secrets and variables → Actions**:
 | Secret | Value |
 |---|---|
 | `CRON_SECRET` | **exactly the same string** as Vercel `CRON_SECRET` |
-| `APP_BASE_URL` | `https://redseer-insights-hour.vercel.app` |
+| `APP_BASE_URL` | `https://YOUR-INSIGHTS-HOUR.vercel.app` |
 
 ### Cron schedule (GitHub Actions)
 
@@ -96,7 +96,7 @@ Check Actions → **Automation cron**:
 - **HTTP 401** → `CRON_SECRET` on GitHub ≠ Vercel. Paste the same value in both places, redeploy Vercel, re-run the workflow.
 - **HTTP 200** → working. Also check `/api/health` → `last_cron.hourly` should update.
 
-Open: https://redseer-insights-hour.vercel.app/api/health — look for `cron_secret_configured` and `last_cron`.
+Open: https://YOUR-INSIGHTS-HOUR.vercel.app/api/health — look for `cron_secret_configured` and `last_cron`.
 
 Workflow `.github/workflows/automation-cron.yml` will then hit:
 
@@ -110,7 +110,7 @@ Manual test (optional):
 
 ```bash
 curl -H "Authorization: Bearer YOUR_CRON_SECRET" \
-  "https://redseer-insights-hour.vercel.app/api/cron/refresh-hourly"
+  "https://YOUR-INSIGHTS-HOUR.vercel.app/api/cron/refresh-hourly"
 ```
 
 ---
@@ -135,7 +135,7 @@ curl -H "Authorization: Bearer YOUR_CRON_SECRET" \
 
 ### How to know data is on Turso
 
-Open: https://redseer-insights-hour.vercel.app/api/health
+Open: https://YOUR-INSIGHTS-HOUR.vercel.app/api/health
 
 You want:
 
@@ -156,7 +156,7 @@ If that line is green and count goes up after **Refresh All Sources**, news is s
 1. Create a free Apify account: https://console.apify.com/sign-up  
 2. Get your API token: https://console.apify.com/settings/integrations  
    (or Account → Integrations → API tokens)
-3. Vercel → project **redseer-insights-hour** → **Settings → Environment Variables**
+3. Vercel → project **Insights Hour** → **Settings → Environment Variables**
 4. Add:
 
 | Name | Value |

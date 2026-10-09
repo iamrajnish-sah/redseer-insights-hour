@@ -6,12 +6,6 @@ and official Instagram handles from the monitor list.
 # kind, label, url_or_handle
 DEFAULT_WEBSITE_TARGETS = [
     # Research firms / festive barometers
-    ("website", "Redseer — Reports", "https://redseer.com/reports/"),
-    (
-        "website",
-        "Redseer — India Online Retail 2026",
-        "https://redseer.com/reports/india-online-retail-2026-the-fastest-year-in-five-and-the-new-engines-behind-it/",
-    ),
     ("website", "Datum Intelligence — Festive Barometer", "https://datumintell.com/festive-barometer"),
     ("website", "Datum Intelligence — Home", "https://datumintell.com/"),
     ("website", "Unicommerce — Blog / Festive Reports", "https://unicommerce.com/blog/"),

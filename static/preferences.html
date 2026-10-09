@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Manage Preferences — Redseer Insight Hour</title>
+<title>Manage Preferences — Insights Hour</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:wght@600;700&display=swap" rel="stylesheet">
 <style>
@@ -47,7 +47,7 @@
 </head>
 <body>
 <div class="shell">
-  <h1 class="brand">Redseer <em>Insight Hour</em></h1>
+  <h1 class="brand">Insights <em>Hour</em></h1>
   <div class="card" id="mainCard">
     <div class="loading" id="loadingState">Loading your preferences...</div>
     <div id="formState" style="display:none;">
@@ -149,7 +149,7 @@ async function savePreferences() {
 }
 
 async function unsubscribeNow(silent=false) {
-  if (!silent && !confirm("Unsubscribe from all Redseer Insight Hour emails?")) return;
+  if (!silent && !confirm("Unsubscribe from all Insights Hour emails?")) return;
   document.getElementById("btnUnsub").disabled = true;
   try {
     const resp = await fetch(API + "/api/unsubscribe?token=" + encodeURIComponent(token));

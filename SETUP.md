@@ -12,7 +12,7 @@ Render is optional and **not free** for a durable disk. Skip it unless you want 
 ## What you still need to do
 
 1. Create Turso DB → add `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` on Vercel → Redeploy  
-2. Keep GitHub Actions secrets: `CRON_SECRET` + `APP_BASE_URL=https://redseer-insights-hour.vercel.app`  
+2. Keep GitHub Actions secrets: `CRON_SECRET` + `APP_BASE_URL=https://YOUR-INSIGHTS-HOUR.vercel.app`  
 3. Later: `APIFY_TOKEN` for Instagram  
 
 Automation (hourly news, 3h APIs, 5h website+IG scrape) runs from GitHub Actions — **no need to open the website**.
@@ -35,7 +35,7 @@ It is a **password for the automation URLs** (`/api/cron/...`).
 - Put the **same value** in:
   1. **Vercel** (or Render) → Environment Variables → `CRON_SECRET`
   2. **GitHub** → repo → Settings → Secrets and variables → Actions → `CRON_SECRET`
-  3. Also set GitHub secret `APP_BASE_URL` = `https://redseer-insights-hour.vercel.app`  
+  3. Also set GitHub secret `APP_BASE_URL` = `https://YOUR-INSIGHTS-HOUR.vercel.app`  
      (or your Render URL after you move)
 
 Without `CRON_SECRET` on a hosted app, cron endpoints reject callers (safe).  
@@ -55,7 +55,7 @@ We already added `render.yaml`, `Procfile`, and `railway.toml` in the repo.
 
 1. Go to [https://dashboard.render.com](https://dashboard.render.com) and sign in (GitHub login is fine).
 2. **New +** → **Blueprint**.
-3. Connect repo `iamrajnish-sah/redseer-insights-hour`.
+3. Connect your Insights Hour GitHub repo.
 4. Render reads `render.yaml` (web service + disk at `/var/data`).
 5. Add env vars (same values you already use on Vercel):
    - `ADMIN_PASSWORD`
@@ -100,7 +100,7 @@ After secrets exist:
 
 | Secret | Example |
 |---|---|
-| `APP_BASE_URL` | `https://redseer-insights-hour.vercel.app` or Render URL |
+| `APP_BASE_URL` | `https://YOUR-INSIGHTS-HOUR.vercel.app` or Render URL |
 | `CRON_SECRET` | same as app env |
 
 Then Actions will call:
@@ -117,7 +117,7 @@ You can also run **Actions → Automation cron → Run workflow** manually.
 
 Production already deployed commit `0df6815`.
 
-1. Open https://redseer-insights-hour.vercel.app/
+1. Open https://YOUR-INSIGHTS-HOUR.vercel.app/
 2. Unlock **Backend Management** with your admin password.
 3. You should see **Website scraping** and **Instagram scraping** boxes.
 4. Add scrape targets later (as you said).
