@@ -76,6 +76,8 @@
       <a class="btn btn-ghost" href="/admin/intelligence">Intelligence Hub</a>
       <button class="btn btn-teal" onclick="openEditModal()">+ Add subscriber</button>
       <button class="btn btn-ghost" onclick="rescueAll()">↻ Rescue lost emails</button>
+      <button class="btn btn-ghost" onclick="recoverFromGmailSent()">Recover from Gmail Sent</button>
+      <button class="btn btn-ghost" onclick="scanGmailSent()">Preview Gmail Sent</button>
       <button class="btn btn-ghost" onclick="restoreFromBlob()">Blob backup</button>
       <button class="btn btn-ghost" onclick="importLegacyRecipients()">Import env recipient list</button>
       <label class="btn btn-ghost" style="cursor:pointer;">
@@ -87,7 +89,8 @@
   </div>
 
   <p class="sub" id="restoreHint" style="margin:-8px 0 18px;">
-    List empty after Turso? Click <strong>Rescue lost emails</strong> (Blob backup + env recipient list),
+    List empty after Turso? Click <strong>Rescue lost emails</strong> (Blob + env list),
+    <strong>Recover from Gmail Sent</strong> (IMAP over the same SMTP app password — needs IMAP on in Gmail),
     or <strong>Import CSV</strong> from an earlier export.
   </p>
 
@@ -407,6 +410,51 @@ async function restoreFromBlob() {
 async function importLegacyRecipients() {
   if (!confirm("Import emails from SECTOR_RECIPIENTS_JSON / sector_recipients.json into subscribers?")) return;
   await _runRescue(API + "/api/admin/subscribers/import-legacy-recipients", "Importing env recipient list…");
+}
+
+async function scanGmailSent() {
+  const hint = document.getElementById("restoreHint");
+  try {
+    if (hint) hint.textContent = "Scanning Gmail Sent (preview, no writes)…";
+    const resp = await adminFetch(
+      API + "/api/admin/subscribers/scan-gmail-sent?days=180&max_messages=400",
+      { method: "POST" }
+    );
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || data.error || "Scan failed");
+    const people = data.recipients || [];
+    const preview = people.slice(0, 12).map(p => {
+      const secs = (p.sectors || []).join(", ") || "(sectors unknown → festive_sale on import)";
+      return `${p.email} — ${secs} (${p.messages_seen || 0} msgs)`;
+    }).join("\n");
+    const msg =
+      `Found ${data.unique_recipients || 0} recipients in ${data.matched_product_messages || 0} product emails ` +
+      `(scanned ${data.scanned_messages || 0}).\n\n` +
+      (preview || "(none)") +
+      (people.length > 12 ? `\n…and ${people.length - 12} more` : "") +
+      "\n\nUse Recover from Gmail Sent to import them.";
+    alert(msg);
+    if (hint) {
+      hint.textContent =
+        `Gmail Sent preview: ${data.unique_recipients || 0} unique recipients from ` +
+        `${data.matched_product_messages || 0} digests.`;
+    }
+    showToast(`Preview: ${data.unique_recipients || 0} recipients found.`);
+  } catch (e) {
+    showToast(e.message, true);
+    if (hint) hint.textContent = e.message;
+  }
+}
+
+async function recoverFromGmailSent() {
+  if (!confirm(
+    "Scan Gmail Sent for Insights Hour digests and import recipients + inferred sector prefs into subscribers?\n\n" +
+    "Needs IMAP enabled on the Google account and SMTP_USER + SMTP_PASSWORD (app password) set."
+  )) return;
+  await _runRescue(
+    API + "/api/admin/subscribers/recover-from-gmail-sent?days=180&max_messages=400",
+    "Recovering recipients from Gmail Sent…"
+  );
 }
 
 async function importCsv(event) {
