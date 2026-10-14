@@ -75,9 +75,19 @@
       <a class="btn btn-ghost" href="/">← Dashboard</a>
       <a class="btn btn-ghost" href="/admin/intelligence">Intelligence Hub</a>
       <button class="btn btn-teal" onclick="openEditModal()">+ Add subscriber</button>
+      <button class="btn btn-ghost" onclick="restoreFromBlob()">↻ Restore from Blob backup</button>
+      <label class="btn btn-ghost" style="cursor:pointer;">
+        ⬆ Import CSV
+        <input id="csvImportInput" type="file" accept=".csv,text/csv" style="display:none" onchange="importCsv(event)">
+      </label>
       <button class="btn btn-primary" onclick="exportCsv()">Export CSV</button>
     </div>
   </div>
+
+  <p class="sub" id="restoreHint" style="margin:-8px 0 18px;">
+    If the list looks empty after the Turso move: try <strong>Restore from Blob backup</strong>,
+    or re-import a previous <strong>Export CSV</strong>.
+  </p>
 
   <div class="cards" id="statCards"></div>
 
@@ -362,6 +372,46 @@ async function exportCsv() {
   a.download = "subscribers.csv";
   a.click();
   URL.revokeObjectURL(url);
+}
+
+async function restoreFromBlob() {
+  if (!confirm("Restore subscriber emails from the Vercel Blob SQLite backup into the live database?")) return;
+  const hint = document.getElementById("restoreHint");
+  try {
+    if (hint) hint.textContent = "Restoring from Blob backup…";
+    const resp = await adminFetch(API + "/api/admin/subscribers/restore-from-blob", { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || data.error || "Restore failed");
+    const msg = data.message || (data.ok ? "Restore finished." : (data.error || "No subscribers found in Blob."));
+    showToast(msg, !data.ok);
+    if (hint) hint.textContent = msg;
+    await loadAnalytics();
+    await loadSubscribers();
+  } catch (e) {
+    showToast(e.message, true);
+    if (hint) hint.textContent = e.message;
+  }
+}
+
+async function importCsv(event) {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = "";
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const resp = await adminFetch(API + "/api/admin/subscribers/import-csv", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ csv: text }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || data.error || "Import failed");
+    showToast(data.message || "CSV imported.");
+    await loadAnalytics();
+    await loadSubscribers();
+  } catch (e) {
+    showToast(e.message, true);
+  }
 }
 
 async function init() {

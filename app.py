@@ -165,7 +165,8 @@ def on_startup():
             database.release_refresh_lock()
         except Exception:
             pass
-        # Turso is the durable store — skip Blob restore (Blob free limits already failed).
+        # Turso is the durable store — skip full Blob DB restore (Blob free limits already failed).
+        # Still try a one-time subscriber rescue from Blob if the live list is empty.
         if database.using_turso():
             database.init_db(light=True)
             scrape_ingest.init_scrape_tables()
@@ -175,6 +176,13 @@ def on_startup():
                     print(f"[startup] seeded {seeded['added']} default scrape targets (Turso)")
             except Exception as exc:
                 print(f"[startup] scrape seed skipped: {exc}")
+            try:
+                total, _active = subscribers.subscriber_count()
+                if total == 0:
+                    rescued = subscribers.restore_subscribers_from_blob()
+                    print(f"[startup] subscriber Blob rescue: {rescued}")
+            except Exception as exc:
+                print(f"[startup] subscriber Blob rescue skipped: {exc}")
             print("[startup] using Turso durable database")
             return
 
@@ -241,12 +249,37 @@ def health():
                     row = conn.execute("SELECT COUNT(*) AS c FROM articles").fetchone()
                     info["article_count"] = row["c"] if row else 0
                     info["active_backend"] = getattr(conn, "backend", None)
+                    try:
+                        sub_total = conn.execute("SELECT COUNT(*) AS c FROM subscribers").fetchone()
+                        sub_active = conn.execute(
+                            "SELECT COUNT(*) AS c FROM subscribers WHERE status = ?",
+                            ("subscribed",),
+                        ).fetchone()
+                        info["subscriber_total"] = sub_total["c"] if sub_total else 0
+                        info["subscriber_active"] = sub_active["c"] if sub_active else 0
+                    except Exception as sub_exc:
+                        info["subscriber_total"] = None
+                        info["subscriber_active"] = None
+                        info["subscriber_error"] = str(sub_exc)[:200]
                 info["turso_ping"] = "ok" if db_conn.LAST_DRIVER in ("http", "native", "embedded") else "fallback-local"
                 if info["turso_ping"] != "ok":
                     info["ok"] = False
             except Exception as exc:
                 info["ok"] = False
                 info["turso_ping"] = str(exc)
+    else:
+        try:
+            total, active = subscribers.subscriber_count()
+            info["subscriber_total"] = total
+            info["subscriber_active"] = active
+        except Exception as sub_exc:
+            info["subscriber_error"] = str(sub_exc)[:200]
+    # Legacy env fallback list (not the Turso subscriber table).
+    try:
+        legacy = email_digest.load_recipients()
+        info["legacy_sector_recipient_emails"] = sum(len(v or []) for v in (legacy or {}).values())
+    except Exception:
+        info["legacy_sector_recipient_emails"] = None
     return info
 
 
@@ -486,6 +519,52 @@ def admin_list_subscribers(
 @app.get("/api/admin/subscribers/analytics")
 def admin_subscriber_analytics(_: None = Depends(admin_auth.require_admin)):
     return subscribers.get_analytics()
+
+
+@app.post("/api/admin/subscribers/restore-from-blob")
+def admin_restore_subscribers_from_blob(_: None = Depends(admin_auth.require_admin)):
+    """Rescue subscriber emails from Vercel Blob SQLite backup into Turso/live DB."""
+    try:
+        return subscribers.restore_subscribers_from_blob()
+    except Exception as exc:
+        raise HTTPException(500, f"Subscriber restore failed: {exc}") from exc
+
+
+@app.post("/api/admin/subscribers/import-csv")
+async def admin_import_subscribers_csv(
+    request: Request, _: None = Depends(admin_auth.require_admin)
+):
+    """Import subscribers from CSV (exported from this app or compatible)."""
+    content_type = (request.headers.get("content-type") or "").lower()
+    try:
+        if "application/json" in content_type:
+            body = await request.json()
+            csv_text = (body or {}).get("csv") or (body or {}).get("text") or ""
+        else:
+            form = await request.form()
+            upload = form.get("file") or form.get("csv")
+            if upload is None:
+                raw = await request.body()
+                csv_text = raw.decode("utf-8", errors="replace")
+            else:
+                data = await upload.read()
+                csv_text = data.decode("utf-8", errors="replace")
+        result = subscribers.import_csv_text(csv_text)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, f"CSV import failed: {exc}") from exc
+    total, active = subscribers.subscriber_count()
+    return {
+        "ok": True,
+        **result,
+        "live_total": total,
+        "live_active": active,
+        "message": (
+            f"CSV import: {result['inserted']} new, {result['updated']} updated, "
+            f"{result['skipped']} skipped. Live total {total}."
+        ),
+    }
 
 
 @app.get("/api/admin/subscribers/export")
@@ -1363,6 +1442,25 @@ def cron_festive_intelligence(
         }
     except Exception as exc:
         raise HTTPException(500, f"Festive intelligence cron failed: {exc}") from exc
+
+
+@app.get("/api/cron/restore-subscribers")
+def cron_restore_subscribers(
+    authorization: str = Header(default=None, alias="Authorization"),
+    user_agent: str = Header(default=None, alias="User-Agent"),
+    x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
+    x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
+):
+    """One-shot rescue: merge subscriber emails from Blob backup into Turso."""
+    if not _cron_allowed(
+        authorization, user_agent, x_vercel_cron_schedule, x_admin_password
+    ):
+        raise HTTPException(401, "Unauthorized")
+    try:
+        result = subscribers.restore_subscribers_from_blob()
+        return {"ok": bool(result.get("ok")), **result}
+    except Exception as exc:
+        raise HTTPException(500, f"Subscriber restore cron failed: {exc}") from exc
 
 
 @app.get("/api/cron/scrape-targets")
