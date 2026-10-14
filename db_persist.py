@@ -37,6 +37,21 @@ def _pathname():
     return os.environ.get("DATABASE_BLOB_PATH", "insights-hour/news.db")
 
 
+def _pathname_candidates():
+    """Current + legacy Blob paths (rename from Redseer branding)."""
+    primary = _pathname()
+    legacy = [
+        "redseer-insight-hour/news.db",
+        "redseer-insights-hour/news.db",
+        "insights-hour/news.db",
+    ]
+    out = []
+    for path in [primary] + legacy:
+        if path and path not in out:
+            out.append(path)
+    return out
+
+
 def _store_id():
     """Bare store id for x-vercel-blob-store-id (strip store_ prefix)."""
     store = (os.environ.get("BLOB_STORE_ID") or "").strip()
@@ -132,6 +147,38 @@ def _save_with_vercel_sdk(local_path):
         return False
 
 
+def _list_blob_url_for_pathname(pathname, retries=3):
+    """Find a backup blob URL for one pathname."""
+    if not enabled() or not pathname:
+        return None
+    for attempt in range(retries):
+        try:
+            resp = requests.get(
+                _api_url({"prefix": pathname}),
+                headers=_headers(),
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                blobs = (resp.json() or {}).get("blobs") or []
+                for blob in blobs:
+                    if blob.get("pathname") == pathname:
+                        url = blob.get("downloadUrl") or blob.get("url")
+                        if url:
+                            return url
+                if blobs:
+                    return blobs[0].get("downloadUrl") or blobs[0].get("url")
+                return None
+            print(
+                f"  [warning] blob list failed for {pathname} "
+                f"(attempt {attempt + 1}/{retries}): {resp.status_code} {resp.text[:240]}"
+            )
+        except Exception as exc:
+            print(f"  [warning] blob list error for {pathname} (attempt {attempt + 1}/{retries}): {exc}")
+        if attempt < retries - 1:
+            time.sleep(1.5 * (attempt + 1))
+    return None
+
+
 def _list_blob_url(retries=3):
     """Find the backup blob URL. Retries — a transient failure here must not
     make the app 'start fresh' and later clobber the cloud backup."""
@@ -140,30 +187,116 @@ def _list_blob_url(retries=3):
         return _CACHED_BLOB_URL
     if not enabled():
         return None
-    for attempt in range(retries):
-        try:
-            resp = requests.get(
-                _api_url({"prefix": _pathname()}),
-                headers=_headers(),
-                timeout=30,
-            )
-            if resp.status_code == 200:
-                blobs = (resp.json() or {}).get("blobs") or []
-                for blob in blobs:
-                    if blob.get("pathname") == _pathname():
-                        _CACHED_BLOB_URL = blob.get("downloadUrl") or blob.get("url")
-                        if _CACHED_BLOB_URL:
-                            return _CACHED_BLOB_URL
-                if blobs:
-                    _CACHED_BLOB_URL = blobs[0].get("downloadUrl") or blobs[0].get("url")
-                    return _CACHED_BLOB_URL
-                return None  # listing worked, no backup exists yet
-            print(f"  [warning] blob list failed (attempt {attempt + 1}/{retries}): {resp.status_code} {resp.text[:240]}")
-        except Exception as exc:
-            print(f"  [warning] blob list error (attempt {attempt + 1}/{retries}): {exc}")
-        if attempt < retries - 1:
-            time.sleep(1.5 * (attempt + 1))
+    for pathname in _pathname_candidates():
+        url = _list_blob_url_for_pathname(pathname, retries=retries)
+        if url:
+            _CACHED_BLOB_URL = url
+            return _CACHED_BLOB_URL
     return None
+
+
+def extract_subscribers_from_sqlite_bytes(data):
+    """Parse a SQLite backup and return subscriber + sector rows (no writes)."""
+    if not data or len(data) < 512:
+        return {"subscribers": [], "sectors": {}, "error": "blob too small or empty"}
+    path = _write_temp_db(data)
+    try:
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        try:
+            tables = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "subscribers" not in tables:
+                return {"subscribers": [], "sectors": {}, "error": "no subscribers table in backup"}
+            rows = [dict(r) for r in conn.execute("SELECT * FROM subscribers").fetchall()]
+            sectors_by_email = {}
+            if "subscriber_sectors" in tables and rows:
+                # Map old ids → email then attach sectors
+                id_to_email = {r["id"]: (r.get("email") or "").strip().lower() for r in rows}
+                for sec in conn.execute(
+                    "SELECT subscriber_id, sector, created_at FROM subscriber_sectors"
+                ).fetchall():
+                    email = id_to_email.get(sec["subscriber_id"])
+                    if not email:
+                        continue
+                    sectors_by_email.setdefault(email, [])
+                    sector = (sec["sector"] or "").strip()
+                    if sector and sector not in sectors_by_email[email]:
+                        sectors_by_email[email].append(sector)
+            return {
+                "subscribers": rows,
+                "sectors": sectors_by_email,
+                "count": len(rows),
+                "error": None,
+            }
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        return {"subscribers": [], "sectors": {}, "error": str(exc)}
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def pull_subscriber_snapshot_from_blob():
+    """
+    Download Blob SQLite backup(s) and extract subscribers.
+    Tries current + legacy pathnames. Returns dict with rows or error.
+    """
+    if not enabled():
+        return {
+            "ok": False,
+            "error": "Blob not configured (BLOB_STORE_ID + token). Cannot recover from Blob.",
+            "paths_tried": _pathname_candidates(),
+            "subscribers": [],
+            "sectors": {},
+        }
+    tried = []
+    best = None
+    for pathname in _pathname_candidates():
+        url = _list_blob_url_for_pathname(pathname, retries=2)
+        entry = {"pathname": pathname, "found": bool(url)}
+        if not url:
+            tried.append(entry)
+            continue
+        data = _download_blob(url)
+        entry["bytes"] = len(data) if data else 0
+        if not data:
+            entry["error"] = "download failed"
+            tried.append(entry)
+            continue
+        parsed = extract_subscribers_from_sqlite_bytes(data)
+        entry["subscriber_count"] = parsed.get("count") or 0
+        entry["error"] = parsed.get("error")
+        tried.append(entry)
+        if (parsed.get("count") or 0) > 0 and (
+            best is None or parsed["count"] > best["count"]
+        ):
+            best = {**parsed, "pathname": pathname, "bytes": len(data)}
+    if not best:
+        return {
+            "ok": False,
+            "error": "No subscriber rows found in any Blob backup path.",
+            "paths_tried": tried,
+            "subscribers": [],
+            "sectors": {},
+        }
+    return {
+        "ok": True,
+        "error": None,
+        "pathname": best.get("pathname"),
+        "bytes": best.get("bytes"),
+        "count": best.get("count"),
+        "subscribers": best.get("subscribers") or [],
+        "sectors": best.get("sectors") or {},
+        "paths_tried": tried,
+    }
 
 
 def storage_status(local_path):

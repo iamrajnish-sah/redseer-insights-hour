@@ -412,3 +412,187 @@ def export_csv(search=None, sector=None, status=None):
             row["updated_at"],
         ])
     return output.getvalue()
+
+
+def upsert_subscriber_snapshot(row, sectors=None):
+    """
+    Insert or merge one subscriber from a backup/CSV without clobbering
+    a richer existing row. Returns 'inserted' | 'updated' | 'skipped'.
+    """
+    email = _normalize_email(row.get("email"))
+    if not email or not EMAIL_RE.match(email):
+        return "skipped"
+    name = (row.get("name") or "").strip() or email.split("@")[0]
+    company = (row.get("company") or "").strip() or None
+    designation = (row.get("designation") or "").strip() or None
+    try:
+        status = validate_status(row.get("status") or STATUS_SUBSCRIBED)
+    except ValueError:
+        status = STATUS_SUBSCRIBED
+    token = (row.get("token") or "").strip() or uuid.uuid4().hex
+    created_at = (row.get("created_at") or "").strip() or _now_iso()
+    updated_at = (row.get("updated_at") or "").strip() or created_at
+
+    sector_list = sectors if sectors is not None else row.get("sectors")
+    if isinstance(sector_list, str):
+        sector_list = [s.strip() for s in sector_list.replace(";", ",").split(",") if s.strip()]
+    sector_list = [s for s in (sector_list or []) if s in SECTOR_LABELS]
+    # Keep unknown-but-present sectors out; require at least one known sector when inserting.
+    now = _now_iso()
+
+    with database.get_conn() as conn:
+        existing = conn.execute(
+            "SELECT * FROM subscribers WHERE email = ?",
+            (email,),
+        ).fetchone()
+        if existing:
+            # Prefer keeping existing token; fill empty profile fields from backup.
+            new_name = existing["name"] or name
+            new_company = existing["company"] or company
+            new_designation = existing["designation"] or designation
+            # If backup says subscribed and local is unsubscribed, keep local choice.
+            new_status = existing["status"] or status
+            conn.execute(
+                """UPDATE subscribers
+                   SET name = ?, company = ?, designation = ?, status = ?, updated_at = ?
+                   WHERE id = ?""",
+                (new_name, new_company, new_designation, new_status, now, existing["id"]),
+            )
+            if sector_list:
+                current = {
+                    r["sector"]
+                    for r in conn.execute(
+                        "SELECT sector FROM subscriber_sectors WHERE subscriber_id = ?",
+                        (existing["id"],),
+                    ).fetchall()
+                }
+                for sector in sector_list:
+                    if sector not in current:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO subscriber_sectors (subscriber_id, sector, created_at) VALUES (?, ?, ?)",
+                            (existing["id"], sector, now),
+                        )
+            return "updated"
+
+        if not sector_list:
+            # Default to festive_sale so recovered emails remain mail-able.
+            sector_list = ["festive_sale"] if "festive_sale" in SECTOR_LABELS else list(SECTOR_LABELS.keys())[:1]
+        try:
+            conn.execute(
+                """INSERT INTO subscribers
+                   (name, email, company, designation, status, token, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (name, email, company, designation, status, token, created_at, updated_at),
+            )
+        except Exception:
+            # Token collision — retry with a fresh token.
+            token = uuid.uuid4().hex
+            conn.execute(
+                """INSERT INTO subscribers
+                   (name, email, company, designation, status, token, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (name, email, company, designation, status, token, created_at, updated_at),
+            )
+        row_id = conn.execute(
+            "SELECT id FROM subscribers WHERE email = ?",
+            (email,),
+        ).fetchone()["id"]
+        for sector in sector_list:
+            conn.execute(
+                "INSERT OR IGNORE INTO subscriber_sectors (subscriber_id, sector, created_at) VALUES (?, ?, ?)",
+                (row_id, sector, created_at or now),
+            )
+        return "inserted"
+
+
+def import_subscriber_rows(rows, sectors_by_email=None):
+    """Bulk upsert from backup rows. Returns counts."""
+    sectors_by_email = sectors_by_email or {}
+    inserted = updated = skipped = 0
+    for row in rows or []:
+        if not isinstance(row, dict):
+            skipped += 1
+            continue
+        email = _normalize_email(row.get("email"))
+        sectors = sectors_by_email.get(email) if email else None
+        result = upsert_subscriber_snapshot(row, sectors=sectors)
+        if result == "inserted":
+            inserted += 1
+        elif result == "updated":
+            updated += 1
+        else:
+            skipped += 1
+    if inserted or updated:
+        database.persist()
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "skipped": skipped,
+        "total_in": len(rows or []),
+    }
+
+
+def import_csv_text(csv_text):
+    """Import subscribers from CSV exported by this app (or compatible)."""
+    if not csv_text or not csv_text.strip():
+        raise ValueError("CSV is empty")
+    reader = csv.DictReader(io.StringIO(csv_text))
+    if not reader.fieldnames:
+        raise ValueError("CSV has no header row")
+    rows = []
+    for raw in reader:
+        # Normalize header keys
+        row = {(k or "").strip().lower(): (v or "").strip() for k, v in raw.items()}
+        email = row.get("email") or row.get("e-mail") or row.get("mail")
+        if not email:
+            continue
+        sectors_raw = row.get("sectors") or row.get("sector") or ""
+        rows.append(
+            {
+                "name": row.get("name") or row.get("full name") or email.split("@")[0],
+                "email": email,
+                "company": row.get("company") or "",
+                "designation": row.get("designation") or row.get("title") or "",
+                "status": row.get("status") or STATUS_SUBSCRIBED,
+                "sectors": sectors_raw,
+                "created_at": row.get("created_at") or "",
+                "updated_at": row.get("updated_at") or "",
+                "token": row.get("token") or "",
+            }
+        )
+    return import_subscriber_rows(rows)
+
+
+def restore_subscribers_from_blob():
+    """Pull subscribers from Vercel Blob SQLite backup into the live DB (Turso/local)."""
+    from db_persist import pull_subscriber_snapshot_from_blob
+
+    snapshot = pull_subscriber_snapshot_from_blob()
+    if not snapshot.get("ok"):
+        return {
+            "ok": False,
+            "error": snapshot.get("error") or "Blob restore failed",
+            "paths_tried": snapshot.get("paths_tried") or [],
+            "inserted": 0,
+            "updated": 0,
+            "skipped": 0,
+        }
+    stats = import_subscriber_rows(
+        snapshot.get("subscribers") or [],
+        sectors_by_email=snapshot.get("sectors") or {},
+    )
+    total, active = subscriber_count()
+    return {
+        "ok": True,
+        "source_pathname": snapshot.get("pathname"),
+        "source_count": snapshot.get("count"),
+        "paths_tried": snapshot.get("paths_tried") or [],
+        "live_total": total,
+        "live_active": active,
+        **stats,
+        "message": (
+            f"Restored from Blob ({snapshot.get('pathname')}): "
+            f"{stats['inserted']} new, {stats['updated']} updated, "
+            f"{stats['skipped']} skipped. Live total now {total}."
+        ),
+    }
