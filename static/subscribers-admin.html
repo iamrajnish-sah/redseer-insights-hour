@@ -75,7 +75,9 @@
       <a class="btn btn-ghost" href="/">← Dashboard</a>
       <a class="btn btn-ghost" href="/admin/intelligence">Intelligence Hub</a>
       <button class="btn btn-teal" onclick="openEditModal()">+ Add subscriber</button>
-      <button class="btn btn-ghost" onclick="restoreFromBlob()">↻ Restore from Blob backup</button>
+      <button class="btn btn-ghost" onclick="rescueAll()">↻ Rescue lost emails</button>
+      <button class="btn btn-ghost" onclick="restoreFromBlob()">Blob backup</button>
+      <button class="btn btn-ghost" onclick="importLegacyRecipients()">Import env recipient list</button>
       <label class="btn btn-ghost" style="cursor:pointer;">
         ⬆ Import CSV
         <input id="csvImportInput" type="file" accept=".csv,text/csv" style="display:none" onchange="importCsv(event)">
@@ -85,8 +87,8 @@
   </div>
 
   <p class="sub" id="restoreHint" style="margin:-8px 0 18px;">
-    If the list looks empty after the Turso move: try <strong>Restore from Blob backup</strong>,
-    or re-import a previous <strong>Export CSV</strong>.
+    List empty after Turso? Click <strong>Rescue lost emails</strong> (Blob backup + env recipient list),
+    or <strong>Import CSV</strong> from an earlier export.
   </p>
 
   <div class="cards" id="statCards"></div>
@@ -374,15 +376,14 @@ async function exportCsv() {
   URL.revokeObjectURL(url);
 }
 
-async function restoreFromBlob() {
-  if (!confirm("Restore subscriber emails from the Vercel Blob SQLite backup into the live database?")) return;
+async function _runRescue(url, busyMsg) {
   const hint = document.getElementById("restoreHint");
   try {
-    if (hint) hint.textContent = "Restoring from Blob backup…";
-    const resp = await adminFetch(API + "/api/admin/subscribers/restore-from-blob", { method: "POST" });
+    if (hint) hint.textContent = busyMsg;
+    const resp = await adminFetch(url, { method: "POST" });
     const data = await resp.json();
-    if (!resp.ok) throw new Error(data.detail || data.error || "Restore failed");
-    const msg = data.message || (data.ok ? "Restore finished." : (data.error || "No subscribers found in Blob."));
+    if (!resp.ok) throw new Error(data.detail || data.error || "Request failed");
+    const msg = data.message || (data.ok ? "Done." : (data.error || "Nothing restored."));
     showToast(msg, !data.ok);
     if (hint) hint.textContent = msg;
     await loadAnalytics();
@@ -391,6 +392,21 @@ async function restoreFromBlob() {
     showToast(e.message, true);
     if (hint) hint.textContent = e.message;
   }
+}
+
+async function rescueAll() {
+  if (!confirm("Rescue lost emails from Blob backup + env recipient list into the live subscriber table?")) return;
+  await _runRescue(API + "/api/admin/subscribers/rescue", "Rescuing lost emails…");
+}
+
+async function restoreFromBlob() {
+  if (!confirm("Restore subscriber emails from the Vercel Blob SQLite backup into the live database?")) return;
+  await _runRescue(API + "/api/admin/subscribers/restore-from-blob", "Restoring from Blob backup…");
+}
+
+async function importLegacyRecipients() {
+  if (!confirm("Import emails from SECTOR_RECIPIENTS_JSON / sector_recipients.json into subscribers?")) return;
+  await _runRescue(API + "/api/admin/subscribers/import-legacy-recipients", "Importing env recipient list…");
 }
 
 async function importCsv(event) {

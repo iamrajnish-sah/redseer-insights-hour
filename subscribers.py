@@ -596,3 +596,86 @@ def restore_subscribers_from_blob():
             f"{stats['skipped']} skipped. Live total now {total}."
         ),
     }
+
+
+def import_legacy_sector_recipients():
+    """
+    Promote SECTOR_RECIPIENTS_JSON / sector_recipients.json emails into the
+    subscribers table (safe upsert). Useful after Turso migration wiped the list.
+    """
+    from email_digest import load_recipients
+
+    recipients = load_recipients() or {}
+    by_email = {}
+    for sector, emails in recipients.items():
+        if sector not in SECTOR_LABELS:
+            continue
+        for email in emails or []:
+            email = _normalize_email(email)
+            if not email:
+                continue
+            by_email.setdefault(email, set()).add(sector)
+
+    rows = []
+    sectors_map = {}
+    for email, sectors in by_email.items():
+        rows.append(
+            {
+                "name": email.split("@")[0].replace(".", " ").replace("_", " ").title(),
+                "email": email,
+                "status": STATUS_SUBSCRIBED,
+                "company": "",
+                "designation": "",
+            }
+        )
+        sectors_map[email] = sorted(sectors)
+
+    if not rows:
+        return {
+            "ok": False,
+            "error": "No emails found in SECTOR_RECIPIENTS_JSON / sector_recipients.json",
+            "inserted": 0,
+            "updated": 0,
+            "skipped": 0,
+            "unique_emails": 0,
+        }
+
+    stats = import_subscriber_rows(rows, sectors_by_email=sectors_map)
+    total, active = subscriber_count()
+    return {
+        "ok": True,
+        "unique_emails": len(rows),
+        "live_total": total,
+        "live_active": active,
+        **stats,
+        "message": (
+            f"Imported legacy sector recipients: {stats['inserted']} new, "
+            f"{stats['updated']} updated ({len(rows)} unique emails). "
+            f"Live total now {total}."
+        ),
+    }
+
+
+def rescue_subscribers_best_effort():
+    """Try Blob backup first, then legacy sector recipient JSON."""
+    results = {"blob": None, "legacy": None}
+    total, _ = subscriber_count()
+    if total == 0:
+        try:
+            results["blob"] = restore_subscribers_from_blob()
+        except Exception as exc:
+            results["blob"] = {"ok": False, "error": str(exc)}
+    total, _ = subscriber_count()
+    # Always merge legacy env list (fills gaps even if Blob partially worked).
+    try:
+        results["legacy"] = import_legacy_sector_recipients()
+    except Exception as exc:
+        results["legacy"] = {"ok": False, "error": str(exc)}
+    total, active = subscriber_count()
+    return {
+        "ok": total > 0,
+        "live_total": total,
+        "live_active": active,
+        "steps": results,
+        "message": f"Rescue finished — live subscribers: {total} active={active}.",
+    }
