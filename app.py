@@ -179,10 +179,10 @@ def on_startup():
             try:
                 total, _active = subscribers.subscriber_count()
                 if total == 0:
-                    rescued = subscribers.restore_subscribers_from_blob()
-                    print(f"[startup] subscriber Blob rescue: {rescued}")
+                    rescued = subscribers.rescue_subscribers_best_effort()
+                    print(f"[startup] subscriber rescue: {rescued}")
             except Exception as exc:
-                print(f"[startup] subscriber Blob rescue skipped: {exc}")
+                print(f"[startup] subscriber rescue skipped: {exc}")
             print("[startup] using Turso durable database")
             return
 
@@ -528,6 +528,24 @@ def admin_restore_subscribers_from_blob(_: None = Depends(admin_auth.require_adm
         return subscribers.restore_subscribers_from_blob()
     except Exception as exc:
         raise HTTPException(500, f"Subscriber restore failed: {exc}") from exc
+
+
+@app.post("/api/admin/subscribers/import-legacy-recipients")
+def admin_import_legacy_recipients(_: None = Depends(admin_auth.require_admin)):
+    """Import emails from SECTOR_RECIPIENTS_JSON / sector_recipients.json into subscribers."""
+    try:
+        return subscribers.import_legacy_sector_recipients()
+    except Exception as exc:
+        raise HTTPException(500, f"Legacy recipient import failed: {exc}") from exc
+
+
+@app.post("/api/admin/subscribers/rescue")
+def admin_rescue_subscribers(_: None = Depends(admin_auth.require_admin)):
+    """Best-effort: Blob backup + legacy sector recipient JSON → subscribers table."""
+    try:
+        return subscribers.rescue_subscribers_best_effort()
+    except Exception as exc:
+        raise HTTPException(500, f"Subscriber rescue failed: {exc}") from exc
 
 
 @app.post("/api/admin/subscribers/import-csv")
@@ -1262,6 +1280,13 @@ def cron_refresh_hourly(
     ):
         raise HTTPException(401, "Unauthorized")
     try:
+        subscriber_rescue = None
+        try:
+            total, _ = subscribers.subscriber_count()
+            if total == 0:
+                subscriber_rescue = subscribers.rescue_subscribers_best_effort()
+        except Exception as rescue_exc:
+            subscriber_rescue = {"ok": False, "error": str(rescue_exc)}
         summary = auto_refresh.try_auto_refresh(force=True, rss_only=True)
         retagged = database.reconcile_festive_sale_tags()
         if retagged.get("added"):
@@ -1451,13 +1476,13 @@ def cron_restore_subscribers(
     x_vercel_cron_schedule: str = Header(default=None, alias="X-Vercel-Cron-Schedule"),
     x_admin_password: str = Header(default=None, alias="X-Admin-Password"),
 ):
-    """One-shot rescue: merge subscriber emails from Blob backup into Turso."""
+    """One-shot rescue: Blob backup + legacy SECTOR_RECIPIENTS_JSON → Turso subscribers."""
     if not _cron_allowed(
         authorization, user_agent, x_vercel_cron_schedule, x_admin_password
     ):
         raise HTTPException(401, "Unauthorized")
     try:
-        result = subscribers.restore_subscribers_from_blob()
+        result = subscribers.rescue_subscribers_best_effort()
         return {"ok": bool(result.get("ok")), **result}
     except Exception as exc:
         raise HTTPException(500, f"Subscriber restore cron failed: {exc}") from exc
