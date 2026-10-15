@@ -35,6 +35,7 @@ import classify_and_summarize
 import dedupe
 import email_digest
 import subscribers
+import gmail_recover
 import intelligence_hub
 import admin_auth
 import auto_refresh
@@ -546,6 +547,45 @@ def admin_rescue_subscribers(_: None = Depends(admin_auth.require_admin)):
         return subscribers.rescue_subscribers_best_effort()
     except Exception as exc:
         raise HTTPException(500, f"Subscriber rescue failed: {exc}") from exc
+
+
+@app.get("/api/admin/subscribers/gmail-sent-status")
+def admin_gmail_sent_status(_: None = Depends(admin_auth.require_admin)):
+    """Whether IMAP + SMTP credentials look ready for Sent-folder recovery."""
+    return {
+        "ok": True,
+        "imap_configured": gmail_recover.imap_configured(),
+        "note": (
+            "Uses SMTP_USER + SMTP_PASSWORD (Gmail app password) over IMAP to read Sent. "
+            "Enable IMAP in Gmail settings. Not the Gmail REST API."
+        ),
+    }
+
+
+@app.post("/api/admin/subscribers/scan-gmail-sent")
+def admin_scan_gmail_sent(
+    days: int = Query(180, ge=7, le=730),
+    max_messages: int = Query(400, ge=20, le=2000),
+    _: None = Depends(admin_auth.require_admin),
+):
+    """Preview recipients + inferred sectors from Gmail Sent (no DB writes)."""
+    try:
+        return gmail_recover.scan_sent_for_recipients(days=days, max_messages=max_messages)
+    except Exception as exc:
+        raise HTTPException(500, f"Gmail Sent scan failed: {exc}") from exc
+
+
+@app.post("/api/admin/subscribers/recover-from-gmail-sent")
+def admin_recover_from_gmail_sent(
+    days: int = Query(180, ge=7, le=730),
+    max_messages: int = Query(400, ge=20, le=2000),
+    _: None = Depends(admin_auth.require_admin),
+):
+    """Scan Gmail Sent for Insights Hour digests and upsert recipients into subscribers."""
+    try:
+        return gmail_recover.recover_subscribers_from_sent(days=days, max_messages=max_messages)
+    except Exception as exc:
+        raise HTTPException(500, f"Gmail Sent recovery failed: {exc}") from exc
 
 
 @app.post("/api/admin/subscribers/import-csv")
