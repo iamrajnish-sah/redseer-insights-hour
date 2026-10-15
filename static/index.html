@@ -515,11 +515,51 @@
     background: #fef2f2;
     border-color: #f87171;
   }
+  .btn-bookmark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 7px 10px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+  .btn-bookmark:hover {
+    border-color: var(--border-strong);
+    color: var(--text);
+  }
+  .btn-bookmark.is-on {
+    color: #b45309;
+    background: #fffbeb;
+    border-color: #fcd34d;
+  }
+  .btn-bookmark.is-on:hover {
+    background: #fef3c7;
+    border-color: #f59e0b;
+  }
   .card-footer-actions {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-shrink: 0;
+  }
+  .tab.tab-bookmarks {
+    border-color: #fcd34d;
+    color: #b45309;
+  }
+  .tab.tab-bookmarks.active {
+    background: #b45309;
+    border-color: #b45309;
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(180, 83, 9, 0.22);
   }
   .sector-check-grid {
     display: grid;
@@ -1397,6 +1437,9 @@ let adminPassword = sessionStorage.getItem("adminPassword") || "";
 let adminUnlocked = false;
 let SECTORS = {};
 let currentSector = "";
+const BOOKMARKS_TAB = "__bookmarks__";
+const BOOKMARKS_KEY = "insightsHourBookmarks.v1";
+let bookmarksById = {};
 let articlesCache = [];
 let daysFilter = 7;
 let feedSummary = { relevant: 0, last_refresh: null, stale: false };
@@ -1530,6 +1573,7 @@ let highlightTimer = null;
 async function init() {
   document.getElementById("todayDate").textContent = new Date().toDateString();
   initDatePicker();
+  loadBookmarkStore();
   try {
     SECTORS = await (await fetch(API + "/api/sectors")).json();
   } catch (_) {
@@ -1748,11 +1792,87 @@ function syncDateFilterButtons() {
 }
 
 function filterLabel() {
+  if (currentSector === BOOKMARKS_TAB) {
+    const n = bookmarkCount();
+    return n === 1 ? "1 bookmark" : `${n} bookmarks`;
+  }
   const pubDate = document.getElementById("dateFilter").value;
   if (pubDate) return pubDate;
   if (daysFilter === 7) return "last 7 days";
   if (daysFilter) return `last ${daysFilter} days`;
   return "all dates";
+}
+
+function loadBookmarkStore() {
+  try {
+    const raw = localStorage.getItem(BOOKMARKS_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    bookmarksById = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    bookmarksById = {};
+  }
+}
+
+function persistBookmarkStore() {
+  try {
+    localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(bookmarksById));
+  } catch (_) {}
+}
+
+function bookmarkCount() {
+  return Object.keys(bookmarksById).length;
+}
+
+function isBookmarked(id) {
+  return Boolean(bookmarksById[String(id)]);
+}
+
+function articleSnapshot(a) {
+  return {
+    id: a.id,
+    title: a.title || "",
+    summary: a.summary || "",
+    body: a.body || "",
+    source: a.source || "",
+    page: a.page || "",
+    pub_date: a.pub_date || "",
+    fetched_at: a.fetched_at || "",
+    url: a.url || "",
+    resolved_url: a.resolved_url || "",
+    image_url: a.image_url || "",
+    sectors: Array.isArray(a.sectors) ? a.sectors.slice() : [],
+    origin: a.origin || "",
+    bookmarked_at: new Date().toISOString(),
+  };
+}
+
+function listBookmarkedArticles() {
+  return Object.values(bookmarksById).map((snap) => {
+    const live = articlesCache.find((a) => String(a.id) === String(snap.id));
+    return live || snap;
+  });
+}
+
+function toggleBookmark(articleId) {
+  const key = String(articleId);
+  if (bookmarksById[key]) {
+    delete bookmarksById[key];
+    persistBookmarkStore();
+    updateTabCounts();
+    renderArticles();
+    showToast("Bookmark removed.");
+    return;
+  }
+  const live = articlesCache.find((a) => String(a.id) === key);
+  if (!live) {
+    showToast("Article not available to bookmark.", true);
+    return;
+  }
+  bookmarksById[key] = articleSnapshot(live);
+  persistBookmarkStore();
+  updateTabCounts();
+  renderArticles();
+  showToast("Article bookmarked.");
 }
 
 function cardSummary(a) {
@@ -2399,6 +2519,13 @@ function buildTabs() {
   allTab.onclick = () => selectTab("", allTab);
   tabsEl.appendChild(allTab);
 
+  const bookmarkTab = document.createElement("div");
+  bookmarkTab.className = "tab tab-bookmarks";
+  bookmarkTab.dataset.sector = BOOKMARKS_TAB;
+  bookmarkTab.innerHTML = `Bookmarks <span class="count" id="count-bookmarks"></span>`;
+  bookmarkTab.onclick = () => selectTab(BOOKMARKS_TAB, bookmarkTab);
+  tabsEl.appendChild(bookmarkTab);
+
   for (const [key, label] of Object.entries(SECTORS)) {
     const tab = document.createElement("div");
     tab.className = "tab";
@@ -2407,6 +2534,7 @@ function buildTabs() {
     tab.onclick = () => selectTab(key, tab);
     tabsEl.appendChild(tab);
   }
+  updateTabCounts();
 }
 
 function isNewArticle(id) {
@@ -2622,21 +2750,36 @@ function updateTabCounts() {
     const el = document.getElementById(`count-${key}`);
     if (el) el.textContent = counts[key] || "";
   }
+  const bm = document.getElementById("count-bookmarks");
+  if (bm) bm.textContent = bookmarkCount() || "";
 }
 
 function renderArticles() {
   const grid = document.getElementById("grid");
   const empty = document.getElementById("emptyState");
   const loadMoreWrap = document.getElementById("loadMoreWrap");
-  let list = articlesCache.filter((a) => {
-    const origin = (a.origin || "").toLowerCase();
-    return origin !== "instagram" && origin !== "linkedin_scrape";
-  });
-  if (currentSector) {
-    list = list.filter(a =>
-      a.sectors.includes(currentSector) ||
-      (currentSector === "cross_sector" && a.sectors.includes("other_relevant"))
-    );
+  const bookmarksView = currentSector === BOOKMARKS_TAB;
+  let list;
+  if (bookmarksView) {
+    list = listBookmarkedArticles();
+    const q = getActiveSearch().toLowerCase();
+    if (q) {
+      list = list.filter((a) => {
+        const hay = `${a.title || ""} ${a.summary || ""} ${a.source || ""}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
+  } else {
+    list = articlesCache.filter((a) => {
+      const origin = (a.origin || "").toLowerCase();
+      return origin !== "instagram" && origin !== "linkedin_scrape";
+    });
+    if (currentSector) {
+      list = list.filter(a =>
+        a.sectors.includes(currentSector) ||
+        (currentSector === "cross_sector" && a.sectors.includes("other_relevant"))
+      );
+    }
   }
 
   grid.innerHTML = "";
@@ -2648,12 +2791,21 @@ function renderArticles() {
     grid.style.display = "none";
     if (loadMoreWrap) loadMoreWrap.style.display = "none";
     if (countEl) {
-      countEl.innerHTML = stored
-        ? `Showing <span>0 of ${stored.toLocaleString()} stored</span> · ${filterText}`
-        : "No articles in this view";
+      if (bookmarksView) {
+        countEl.innerHTML = `Showing <span>0</span> · ${filterText}`;
+      } else {
+        countEl.innerHTML = stored
+          ? `Showing <span>0 of ${stored.toLocaleString()} stored</span> · ${filterText}`
+          : "No articles in this view";
+      }
     }
     const q = getActiveSearch();
-    if (q) {
+    if (bookmarksView) {
+      empty.querySelector("h3").textContent = q ? "No matching bookmarks" : "No bookmarks yet";
+      empty.querySelector("p").textContent = q
+        ? `Nothing bookmarked matches "${q}".`
+        : "Tap Bookmark on any news card to save it here. Saved on this browser.";
+    } else if (q) {
       empty.querySelector("h3").textContent = "No matching news";
       empty.querySelector("p").textContent = `Nothing found for "${q}". Try another word or click Clear.`;
     } else if (currentSector) {
@@ -2674,9 +2826,14 @@ function renderArticles() {
     const extra = visible.length < list.length
       ? ` · showing ${visible.length.toLocaleString()} now`
       : "";
-    countEl.innerHTML = stored && list.length < stored
-      ? `Showing <span>${list.length.toLocaleString()} of ${stored.toLocaleString()} stored</span> · ${filterText}${extra}`
-      : `Showing <span>${list.length.toLocaleString()} article${list.length === 1 ? "" : "s"}</span> · ${filterText}${extra}`;
+    if (bookmarksView) {
+      countEl.innerHTML =
+        `Showing <span>${list.length.toLocaleString()} bookmark${list.length === 1 ? "" : "s"}</span> · ${filterText}${extra}`;
+    } else {
+      countEl.innerHTML = stored && list.length < stored
+        ? `Showing <span>${list.length.toLocaleString()} of ${stored.toLocaleString()} stored</span> · ${filterText}${extra}`
+        : `Showing <span>${list.length.toLocaleString()} article${list.length === 1 ? "" : "s"}</span> · ${filterText}${extra}`;
+    }
   }
   if (loadMoreWrap) {
     loadMoreWrap.style.display = visible.length < list.length ? "flex" : "none";
@@ -2687,16 +2844,24 @@ function renderArticles() {
   visible.forEach(a => {
     const card = document.createElement("article");
     const highlight = useHighlightCard(a);
+    const saved = isBookmarked(a.id);
     card.className = "card"
       + (highlight ? " card-newspaper " + highlightThemeClass(a) : "")
-      + (isNewArticle(a.id) ? " is-new" : "");
+      + (isNewArticle(a.id) ? " is-new" : "")
+      + (saved ? " is-bookmarked" : "");
     const newPill = isNewArticle(a.id) ? '<span class="new-pill">New</span>' : "";
-    const badges = a.sectors.map(s => `<span class="badge">${SECTORS[s] || s}</span>`).join("");
+    const sectors = Array.isArray(a.sectors) ? a.sectors : [];
+    const badges = sectors.map(s => `<span class="badge">${SECTORS[s] || s}</span>`).join("");
     const sourceLabel = a.page ? `${a.source}, ${a.page}` : a.source;
     const readUrl = a.resolved_url || a.url;
     const link = readUrl
       ? `<a class="btn-read-more" href="${escapeAttr(readUrl)}" target="_blank" rel="noopener">Read →</a>`
       : "";
+    const bookmarkBtn =
+      `<button type="button" class="btn-bookmark${saved ? " is-on" : ""}" ` +
+      `onclick="toggleBookmark(${Number(a.id)})" aria-pressed="${saved ? "true" : "false"}" ` +
+      `title="${saved ? "Remove bookmark" : "Bookmark this article"}">` +
+      `${saved ? "Bookmarked" : "Bookmark"}</button>`;
     const deleteBtn = adminUnlocked
       ? `<button type="button" class="btn-card-delete" onclick="deleteArticle(${Number(a.id)})">Delete</button>`
       : "";
@@ -2710,7 +2875,7 @@ function renderArticles() {
       </div>
       <div class="card-footer">
         <span class="card-meta-text">${displayText(sourceLabel)} · ${a.pub_date}</span>
-        <span class="card-footer-actions">${deleteBtn}${link}</span>
+        <span class="card-footer-actions">${bookmarkBtn}${deleteBtn}${link}</span>
       </div>
     `;
     grid.appendChild(card);
@@ -2827,6 +2992,10 @@ async function deleteArticle(articleId) {
     const data = await readJson(resp);
     if (!resp.ok) throw new Error(data.detail || data.message || "Delete failed");
     articlesCache = articlesCache.filter(a => a.id !== articleId);
+    if (bookmarksById[String(articleId)]) {
+      delete bookmarksById[String(articleId)];
+      persistBookmarkStore();
+    }
     updateTabCounts();
     renderArticles();
     if (document.getElementById("backendPanel").classList.contains("open")) {
